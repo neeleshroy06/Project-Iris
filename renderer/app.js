@@ -1,4 +1,9 @@
-import { GeminiLiveSession, MODEL_LIVE_FLASH } from './lib/gemini-live.js';
+import {
+  GeminiLiveSession,
+  MODEL_LIVE_FLASH,
+  DEFAULT_LIVE_SYSTEM_INSTRUCTION,
+  withObservationMode,
+} from './lib/gemini-live.js';
 import {
   MicStreamer,
   ScreenCapture,
@@ -22,9 +27,13 @@ const els = {
   desktopPicker: $('desktopPicker'),
   desktopPickerGrid: $('desktopPickerGrid'),
   desktopPickerCancel: $('desktopPickerCancel'),
+  observationModeGroup: $('observationModeGroup'),
+  obsModeSilent: $('obsModeSilent'),
+  obsModeAmbient: $('obsModeAmbient'),
 };
 
 const THEME_STORAGE_KEY = 'iris-theme';
+const OBSERVATION_STORAGE_KEY = 'iris-observation-mode';
 
 function applyTheme(theme) {
   const t = theme === 'light' ? 'light' : 'dark';
@@ -115,8 +124,79 @@ let captureFocusNormRegions = null;
 let lastEncodeWidth = 0;
 let lastEncodeHeight = 0;
 
+/** Last frame sent to Live (and to spreadsheet export). */
+let lastScreenJpegBase64 = null;
+
 let pendingUserEl = null;
 let pendingIrisEl = null;
+
+/** @type {'silent' | 'ambient'} */
+let observationMode = 'silent';
+function loadObservationMode() {
+  try {
+    const v = localStorage.getItem(OBSERVATION_STORAGE_KEY);
+    if (v === 'ambient' || v === 'silent') return v;
+  } catch {
+    /* ignore */
+  }
+  return 'silent';
+}
+
+function getObservationMode() {
+  return observationMode;
+}
+
+function setObservationModeUi(mode) {
+  observationMode = mode === 'ambient' ? 'ambient' : 'silent';
+  if (els.obsModeAmbient) els.obsModeAmbient.checked = observationMode === 'ambient';
+  if (els.obsModeSilent) els.obsModeSilent.checked = observationMode === 'silent';
+}
+
+function saveObservationMode(mode) {
+  try {
+    localStorage.setItem(OBSERVATION_STORAGE_KEY, mode);
+  } catch {
+    /* ignore */
+  }
+}
+
+function syncObservationModeToMain() {
+  try {
+    window.iris?.syncObservationMode?.(getObservationMode());
+  } catch {
+    /* ignore */
+  }
+}
+
+function setObservationGroupDisabled(disabled) {
+  els.observationModeGroup?.classList.toggle('observation-mode--disabled', !!disabled);
+  const inputs = els.observationModeGroup?.querySelectorAll('input[name="observationMode"]');
+  inputs?.forEach((el) => {
+    el.disabled = !!disabled;
+  });
+}
+
+function initObservationMode() {
+  setObservationModeUi(loadObservationMode());
+  syncObservationModeToMain();
+  const onChange = () => {
+    const m = els.obsModeAmbient?.checked ? 'ambient' : 'silent';
+    setObservationModeUi(m);
+    saveObservationMode(getObservationMode());
+    syncObservationModeToMain();
+  };
+  els.obsModeSilent?.addEventListener('change', onChange);
+  els.obsModeAmbient?.addEventListener('change', onChange);
+  if (typeof window.iris?.onObservationMode === 'function') {
+    window.iris.onObservationMode((payload) => {
+      const m = payload?.mode;
+      if (m !== 'ambient' && m !== 'silent') return;
+      if (getObservationMode() === m) return;
+      setObservationModeUi(m);
+      saveObservationMode(getObservationMode());
+    });
+  }
+}
 
 function setSessionLiveForShell(live) {
   try {
@@ -301,7 +381,10 @@ async function startScreenShare() {
     const stream = await acquireScreenVideoStream();
 
     captureFocusNormRegions = null;
-    screenCap = new ScreenCapture((b64) => session.sendScreenJpegBase64(b64), {
+    screenCap = new ScreenCapture((b64) => {
+      lastScreenJpegBase64 = b64;
+      session.sendScreenJpegBase64(b64);
+    }, {
       fps: 1,
       maxWidth: 1280,
       quality: 0.72,
@@ -379,7 +462,20 @@ function finalizePending(role) {
   els.transcript.scrollTop = els.transcript.scrollHeight;
 }
 
+/** Internal Live markers must never appear in the conversation UI (they may leak into transcription). */
+function transcriptLooksLikeIrisClientMarker(s) {
+  return typeof s === 'string' && s.includes('[Iris client]');
+}
+
 function onInputTx({ text, finished }) {
+  const raw = text || '';
+  if (transcriptLooksLikeIrisClientMarker(raw)) {
+    if (finished && pendingUserEl) {
+      pendingUserEl.closest('.msg')?.remove();
+      pendingUserEl = null;
+    }
+    return;
+  }
   const el = ensurePendingBubble('you');
   el.textContent = text;
   els.transcript.scrollTop = els.transcript.scrollHeight;
@@ -387,10 +483,161 @@ function onInputTx({ text, finished }) {
 }
 
 function onOutputTx({ text, finished }) {
+  const raw = text || '';
+  if (transcriptLooksLikeIrisClientMarker(raw)) {
+    if (finished && pendingIrisEl) {
+      pendingIrisEl.closest('.msg')?.remove();
+      pendingIrisEl = null;
+    }
+    return;
+  }
   const el = ensurePendingBubble('iris');
   el.textContent = text;
   els.transcript.scrollTop = els.transcript.scrollHeight;
   if (finished) finalizePending('iris');
+}
+
+function normalizeFunctionCalls(toolCall) {
+  if (!toolCall) return [];
+  const list = toolCall.functionCalls || toolCall.function_calls;
+  return Array.isArray(list) ? list : [];
+}
+
+function fcArgs(fc) {
+  const raw = fc.args ?? fc.arguments;
+  if (raw == null) return {};
+  if (typeof raw === 'string') {
+    try {
+      return JSON.parse(raw);
+    } catch {
+      return {};
+    }
+  }
+  return typeof raw === 'object' ? raw : {};
+}
+
+function addFileDownloadMessage(
+  filename,
+  base64,
+  mimeType = 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet'
+) {
+  const wrap = document.createElement('div');
+  wrap.className = 'msg msg-iris msg-attachment';
+  const label = document.createElement('div');
+  label.className = 'msg-label';
+  label.textContent = 'Iris';
+  const inner = document.createElement('div');
+  inner.className = 'msg-body';
+  const a = document.createElement('a');
+  a.className = 'file-download-link';
+  a.textContent = `Download ${filename}`;
+  a.download = filename;
+  const bytes = Uint8Array.from(atob(base64), (c) => c.charCodeAt(0));
+  const blob = new Blob([bytes], {
+    type: mimeType,
+  });
+  const url = URL.createObjectURL(blob);
+  a.href = url;
+  a.addEventListener('click', () => {
+    setTimeout(() => URL.revokeObjectURL(url), 60_000);
+  });
+  inner.appendChild(a);
+  wrap.append(label, inner);
+  els.transcript.appendChild(wrap);
+  els.transcript.scrollTop = els.transcript.scrollHeight;
+}
+
+async function handleLiveToolCall(toolCall) {
+  if (!session?.connected) return;
+  const calls = normalizeFunctionCalls(toolCall);
+  const responses = [];
+  const canExport =
+    typeof window.iris?.invokeExportScreenFile === 'function' ||
+    typeof window.iris?.invokeBuildXlsxFromScreen === 'function';
+
+  for (const fc of calls) {
+    const id = fc.id ?? fc.callId ?? '';
+    const name = fc.name ?? fc.functionName ?? '';
+    const isXlsx = name === 'generate_xlsx_from_screen_chart';
+    const isTxt = name === 'generate_txt_from_screen';
+    if (!isXlsx && !isTxt) {
+      responses.push({
+        id,
+        name: name || 'unknown',
+        response: { success: false, error: 'unknown_tool' },
+      });
+      continue;
+    }
+    const args = fcArgs(fc);
+    const title = typeof args.title === 'string' ? args.title : '';
+    try {
+      const img = lastScreenJpegBase64;
+      if (!img) {
+        responses.push({
+          id,
+          name,
+          response: {
+            success: false,
+            userMessage: 'Share your screen first so content is visible.',
+          },
+        });
+        continue;
+      }
+      if (!canExport) {
+        responses.push({
+          id,
+          name,
+          response: { success: false, error: 'export_unavailable' },
+        });
+        continue;
+      }
+      const format = isTxt ? 'txt' : 'xlsx';
+      let r;
+      if (typeof window.iris.invokeExportScreenFile === 'function') {
+        r = await window.iris.invokeExportScreenFile({ imageBase64: img, title, format });
+      } else if (format === 'xlsx') {
+        r = await window.iris.invokeBuildXlsxFromScreen({ imageBase64: img, title });
+      } else {
+        responses.push({
+          id,
+          name,
+          response: { success: false, error: 'export_unavailable' },
+        });
+        continue;
+      }
+      const mime =
+        format === 'txt'
+          ? 'text/plain;charset=utf-8'
+          : 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet';
+      addFileDownloadMessage(r.filename, r.base64, mime);
+      const summary =
+        format === 'xlsx' && r.rowCount != null
+          ? `Created ${r.filename} with ${r.rowCount} rows.`
+          : `Created ${r.filename}.`;
+      responses.push({
+        id,
+        name,
+        response: {
+          success: true,
+          filename: r.filename,
+          ...(format === 'xlsx' && r.rowCount != null ? { rowCount: r.rowCount } : {}),
+          summary,
+        },
+      });
+    } catch (e) {
+      responses.push({
+        id,
+        name,
+        response: {
+          success: false,
+          error: e?.message || String(e),
+        },
+      });
+    }
+  }
+  if (responses.length) {
+    session.sendToolResponse(responses);
+  }
 }
 
 async function stopAll() {
@@ -440,6 +687,8 @@ async function stopAll() {
 
   pendingUserEl = null;
   pendingIrisEl = null;
+  lastScreenJpegBase64 = null;
+  setObservationGroupDisabled(false);
 }
 
 async function startSession() {
@@ -455,12 +704,17 @@ async function startSession() {
   await stopAll();
   setStatus('connecting', 'Connecting…');
   setRunning(true);
-
   player = new PcmPlayer();
+
+  const systemInstruction = withObservationMode(
+    DEFAULT_LIVE_SYSTEM_INSTRUCTION,
+    getObservationMode()
+  );
 
   session = new GeminiLiveSession(apiKey, {
     model: MODEL_LIVE_FLASH,
     voiceName: 'Kore',
+    systemInstruction,
   });
 
   session.onSetupComplete = async () => {
@@ -508,6 +762,10 @@ async function startSession() {
   session.onTurnComplete = () => {
     finalizePending('you');
     finalizePending('iris');
+  };
+
+  session.onToolCall = (tc) => {
+    void handleLiveToolCall(tc);
   };
 
   session.onError = (err) => {
@@ -590,5 +848,6 @@ window.addEventListener('beforeunload', () => {
 });
 
 initTheme();
+initObservationMode();
 initWelcome();
 setStatus('idle', 'Disconnected');

@@ -22,4 +22,13 @@ contextBridge.exposeInMainWorld('iris', {
     ipcRenderer.on('iris:stop-screen-share', handler);
     return () => ipcRenderer.removeListener('iris:stop-screen-share', handler);
   },
+  syncObservationMode: (mode) => ipcRenderer.send('iris:set-observation-mode', mode),
+  onObservationMode: (cb) => {
+    const handler = (_, payload) => cb(payload);
+    ipcRenderer.on('iris:observation-mode', handler);
+    return () => ipcRenderer.removeListener('iris:observation-mode', handler);
+  },
+  invokeBuildXlsxFromScreen: (payload) =>
+    ipcRenderer.invoke('iris:build-xlsx-from-screen', payload),
+  invokeExportScreenFile: (payload) => ipcRenderer.invoke('iris:export-screen-file', payload),
 });

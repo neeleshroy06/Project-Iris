@@ -10,7 +10,13 @@ import {
   composeLivePrompt,
   IRIS_IDENTITY,
   IRIS_TECHNICAL_CONTEXT,
+  withObservationMode,
 } from './iris-live-prompts.js';
+import {
+  SPREADSHEET_FUNCTION_DECLARATION,
+  TEXT_FILE_FUNCTION_DECLARATION,
+  IRIS_FILE_EXPORT_TOOL_INSTRUCTION,
+} from './iris-tools.js';
 
 export const MODEL_LIVE_FLASH = 'gemini-3.1-flash-live-preview';
 
@@ -21,6 +27,7 @@ export {
   composeLivePrompt,
   IRIS_IDENTITY,
   IRIS_TECHNICAL_CONTEXT,
+  withObservationMode,
 };
 
 const WS_PATH =
@@ -59,6 +66,11 @@ function parseServerMessage(raw) {
 
   if (data.toolCall) {
     out.toolCall = data.toolCall;
+    return out;
+  }
+
+  if (data.serverContent?.toolCall) {
+    out.toolCall = data.serverContent.toolCall;
     return out;
   }
 
@@ -104,7 +116,13 @@ export class GeminiLiveSession {
     this._model = options.model || MODEL_LIVE_FLASH;
     this._voiceName = options.voiceName || 'Kore';
     this._temperature = options.temperature ?? 0.9;
-    this._systemInstruction = options.systemInstruction || DEFAULT_LIVE_SYSTEM_INSTRUCTION;
+    const base = options.systemInstruction || DEFAULT_LIVE_SYSTEM_INSTRUCTION;
+    const fileToolsOff =
+      options.enableScreenFileTools === false || options.enableSpreadsheetTool === false;
+    this._enableScreenFileTools = !fileToolsOff;
+    this._systemInstruction = this._enableScreenFileTools
+      ? `${base.trim()}\n\n${IRIS_FILE_EXPORT_TOOL_INSTRUCTION}`
+      : base;
 
     this._ws = null;
     this.connected = false;
@@ -115,39 +133,46 @@ export class GeminiLiveSession {
     this.onOutputTranscription = () => {};
     this.onInterrupted = () => {};
     this.onTurnComplete = () => {};
+    this.onToolCall = () => {};
     this.onError = () => {};
     this.onClose = () => {};
   }
 
   _buildSetupMessage() {
-    return {
-      setup: {
-        model: `models/${this._model}`,
-        generationConfig: {
-          responseModalities: ['AUDIO'],
-          temperature: this._temperature,
-          speechConfig: {
-            voiceConfig: {
-              prebuiltVoiceConfig: {
-                voiceName: this._voiceName,
-              },
+    const setup = {
+      model: `models/${this._model}`,
+      generationConfig: {
+        responseModalities: ['AUDIO'],
+        temperature: this._temperature,
+        speechConfig: {
+          voiceConfig: {
+            prebuiltVoiceConfig: {
+              voiceName: this._voiceName,
             },
           },
         },
-        systemInstruction: {
-          parts: [{ text: this._systemInstruction }],
-        },
-        realtimeInputConfig: {
-          automaticActivityDetection: {
-            disabled: false,
-            silenceDurationMs: 2200,
-            prefixPaddingMs: 480,
-          },
-        },
-        inputAudioTranscription: {},
-        outputAudioTranscription: {},
       },
+      systemInstruction: {
+        parts: [{ text: this._systemInstruction }],
+      },
+      realtimeInputConfig: {
+        automaticActivityDetection: {
+          disabled: false,
+          silenceDurationMs: 2200,
+          prefixPaddingMs: 480,
+        },
+      },
+      inputAudioTranscription: {},
+      outputAudioTranscription: {},
     };
+
+    if (this._enableScreenFileTools) {
+      setup.tools = [
+        { functionDeclarations: [SPREADSHEET_FUNCTION_DECLARATION, TEXT_FILE_FUNCTION_DECLARATION] },
+      ];
+    }
+
+    return { setup };
   }
 
   connect() {
@@ -194,6 +219,11 @@ export class GeminiLiveSession {
       }
 
       if (parsed.toolCall) {
+        try {
+          this.onToolCall(parsed.toolCall);
+        } catch (err) {
+          console.error('onToolCall', err);
+        }
         return;
       }
 
@@ -256,5 +286,23 @@ export class GeminiLiveSession {
   sendText(text) {
     if (!this._ws || this._ws.readyState !== WebSocket.OPEN) return;
     this._ws.send(JSON.stringify({ realtimeInput: { text } }));
+  }
+
+  /**
+   * @param {Array<{ id: string, name: string, response: Record<string, unknown> }>} functionResponses
+   */
+  sendToolResponse(functionResponses) {
+    if (!this._ws || this._ws.readyState !== WebSocket.OPEN) return;
+    if (!Array.isArray(functionResponses) || !functionResponses.length) return;
+    const msg = {
+      toolResponse: {
+        functionResponses: functionResponses.map((fr) => ({
+          id: fr.id,
+          name: fr.name,
+          response: fr.response,
+        })),
+      },
+    };
+    this._ws.send(JSON.stringify(msg));
   }
 }

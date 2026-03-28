@@ -12,6 +12,17 @@
       <span class="pulse" aria-hidden="true" title="Session active"></span>
       <div class="bar-actions">
         <button type="button" id="btnFocusMode" class="btn">Add focus</button>
+        <div
+          class="bar-observation"
+          role="group"
+          aria-label="Screen observation"
+          title="Silent: only speaks when you talk to Iris. Ambient: brief notes on big screen changes. If you change while live, stop and start the session for it to apply."
+        >
+          <input type="radio" name="observationModeBar" id="obsModeSilentBar" value="silent" checked />
+          <label for="obsModeSilentBar">Silent</label>
+          <input type="radio" name="observationModeBar" id="obsModeAmbientBar" value="ambient" />
+          <label for="obsModeAmbientBar">Ambient</label>
+        </div>
         <button type="button" id="btnStopShare" class="btn btn-danger">Stop share</button>
       </div>
     </div>

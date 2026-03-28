@@ -118,6 +118,21 @@
         <button type="button" id="btnStart" class="btn btn-primary">Start session</button>
         <button type="button" id="btnStop" class="btn" disabled>Stop</button>
         <button type="button" id="btnShareScreen" class="btn btn-secondary" disabled>Share screen</button>
+        <div
+          id="observationModeGroup"
+          class="observation-mode"
+          role="group"
+          aria-labelledby="observationModeLabel"
+          title="Silent: only speaks when you talk to Iris. Ambient: may speak briefly on big screen changes. Changing this requires a new session."
+        >
+          <span id="observationModeLabel" class="observation-mode__label">Screen</span>
+          <div class="observation-mode__segmented">
+            <input type="radio" name="observationMode" id="obsModeSilent" value="silent" checked />
+            <label for="obsModeSilent">Silent</label>
+            <input type="radio" name="observationMode" id="obsModeAmbient" value="ambient" />
+            <label for="obsModeAmbient">Ambient</label>
+          </div>
+        </div>
       </section>
 
       <main class="main">

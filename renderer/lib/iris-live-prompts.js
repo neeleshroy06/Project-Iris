@@ -71,3 +71,20 @@ export const DEFAULT_LIVE_SYSTEM_INSTRUCTION = LIVE_PROMPT_MODES.default;
 
 /** All mode keys for UI or docs */
 export const LIVE_PROMPT_MODE_KEYS = Object.keys(LIVE_PROMPT_MODES);
+
+/** Mode 1 — Silent: never speak unless the user engages you. */
+export const OBSERVATION_MODE_SILENT = `Screen observation: SILENT. You receive periodic screen frames for context only. Do not speak unless the user has spoken to you or clearly continued a conversation that expects a reply. Do not comment on screen changes, scrolling, cursor movement, or typing unless the user asked. When idle, stay completely silent.`;
+
+/** Mode 2 — Ambient: brief spoken notes on significant screen changes only. */
+export const OBSERVATION_MODE_AMBIENT = `Screen observation: AMBIENT. You receive periodic still frames (about one per second). Compare each frame to the previous one. A significant change is NOT limited to switching OS windows or apps—treat these as significant whenever they clearly differ from the last frame: new error, warning, toast, or stack trace; large new block of terminal output or build failure; modal, dialog, or overlay appearing or disappearing; video-call UI (joined participant, gallery/grid, screen-share strip); browser or editor showing a clearly different page, document, or tab title/content (not mere scrolling); slide deck moved to another slide; obvious replacement of most of the viewport’s content. Minor scrolling, cursor motion, typing, subtle highlights, or small edits in the same view are not significant. You may speak at most ONE short, natural sentence about what changed. Do not narrate a static screen. If nothing significant changed, say nothing.
+
+While the user is actively speaking (you see their speech in input transcription), do not emit ambient commentary—wait until they finish an utterance, except when answering a direct question they asked you.`;
+
+/**
+ * @param {string} baseInstruction Full system instruction (e.g. DEFAULT_LIVE_SYSTEM_INSTRUCTION).
+ * @param {'silent' | 'ambient'} mode
+ */
+export function withObservationMode(baseInstruction, mode) {
+  const block = mode === 'ambient' ? OBSERVATION_MODE_AMBIENT : OBSERVATION_MODE_SILENT;
+  return `${baseInstruction.trim()}\n\n${block}`;
+}

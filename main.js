@@ -12,12 +12,34 @@ const { execFile } = require('child_process');
 require('dotenv').config({ path: path.join(__dirname, '.env') });
 
 const shellPreload = path.join(__dirname, 'preload-shell.js');
+const {
+  extractChartJson,
+  buildXlsxBuffer,
+  extractTextFileJson,
+  buildTxtBuffer,
+} = require('./xlsx-from-chart');
 
 let mainWindow = null;
 let focusBarWindow = null;
 let overlayWindow = null;
 let sessionLive = false;
 let overlayDrawingMode = false;
+
+/** Synced with renderer (localStorage); used for focus bar + cross-window UI. */
+let observationMode = 'silent';
+
+/** After “Done” on focus regions, ignore auto-hide until this time (ms) — avoids spurious restore/focus. */
+let focusBarAutoHideSuppressedUntil = 0;
+
+function broadcastObservationMode() {
+  const payload = { mode: observationMode };
+  if (mainWindow && !mainWindow.isDestroyed()) {
+    mainWindow.webContents.send('iris:observation-mode', payload);
+  }
+  if (focusBarWindow && !focusBarWindow.isDestroyed()) {
+    focusBarWindow.webContents.send('iris:observation-mode', payload);
+  }
+}
 
 /** @type {{ videoWidth?: number, videoHeight?: number, encodeWidth?: number, encodeHeight?: number, displaySurface?: string|null, electronSourceId?: string|null, sourceName?: string|null } | null} */
 let captureMetrics = null;
@@ -349,7 +371,7 @@ function positionFocusBar() {
   if (!focusBarWindow || focusBarWindow.isDestroyed()) return;
   const primary = screen.getPrimaryDisplay();
   const b = primary.workArea;
-  const barW = 440;
+  const barW = 580;
   const barH = 54;
   focusBarWindow.setBounds({
     x: Math.round(b.x + b.width - barW - 12),
@@ -362,7 +384,7 @@ function positionFocusBar() {
 function ensureFocusBarWindow() {
   if (focusBarWindow && !focusBarWindow.isDestroyed()) return focusBarWindow;
   focusBarWindow = new BrowserWindow({
-    width: 440,
+    width: 580,
     height: 54,
     show: false,
     frame: false,
@@ -385,6 +407,16 @@ function ensureFocusBarWindow() {
     focusBarWindow.setVisibleOnAllWorkspaces(true, { visibleOnFullScreen: true });
   } catch {
     /* ignore */
+  }
+  /* Above overlay (same always-on-top stack): higher relative layer = closer to user. */
+  try {
+    focusBarWindow.setAlwaysOnTop(true, 'screen-saver', 2);
+  } catch {
+    try {
+      focusBarWindow.setAlwaysOnTop(true, 'pop-up-menu');
+    } catch {
+      focusBarWindow.setAlwaysOnTop(true);
+    }
   }
   focusBarWindow.loadFile(path.join(__dirname, 'renderer', 'focus-bar.html'));
   focusBarWindow.on('closed', () => {
@@ -433,6 +465,8 @@ function ensureOverlayWindow() {
   } catch {
     /* ignore */
   }
+  /* Plain alwaysOnTop only: elevated levels (e.g. screen-saver) can skew getContentBounds vs
+   * getVirtualBounds on Windows and break overlay → virtual-desktop coordinate mapping. */
   overlayWindow.loadFile(path.join(__dirname, 'renderer', 'overlay-focus.html'));
   overlayWindow.on('closed', () => {
     overlayWindow = null;
@@ -454,12 +488,11 @@ function resizeOverlayToVirtualScreen() {
   });
   const sendContentSize = () => {
     if (!overlayWindow || overlayWindow.isDestroyed()) return;
-    const cb = overlayWindow.getContentBounds();
-    const w = cb.width > 0 ? cb.width : rw;
-    const h = cb.height > 0 ? cb.height : rh;
+    /* Same numbers as getVirtualBounds() used in overlayRectsToAbsolute — avoids drift from
+     * getContentBounds() on Windows when the overlay must match the full virtual desktop. */
     overlayWindow.webContents.send('overlay:reposition', {
-      width: w,
-      height: h,
+      width: rw,
+      height: rh,
     });
   };
   sendContentSize();
@@ -472,8 +505,9 @@ function showFocusBar() {
   const win = ensureFocusBarWindow();
   positionFocusBar();
   win.show();
+  raiseFocusBarAboveOverlay();
   try {
-    win.moveTop();
+    win.webContents.send('iris:observation-mode', { mode: observationMode });
   } catch {
     /* ignore */
   }
@@ -482,6 +516,31 @@ function showFocusBar() {
 function hideFocusBar() {
   if (focusBarWindow && !focusBarWindow.isDestroyed()) {
     focusBarWindow.hide();
+  }
+}
+
+/** Hide focus bar when the user brings the main Iris window forward — not during Done/overlay churn. */
+function hideFocusBarForMainWindowActivation() {
+  if (Date.now() < focusBarAutoHideSuppressedUntil) return;
+  hideFocusBar();
+}
+
+/** Keep the compact bar above the full-screen overlay (focus bar uses a higher always-on-top level). */
+function raiseFocusBarAboveOverlay() {
+  if (!focusBarWindow || focusBarWindow.isDestroyed()) return;
+  try {
+    focusBarWindow.setAlwaysOnTop(true, 'screen-saver', 2);
+  } catch {
+    try {
+      focusBarWindow.setAlwaysOnTop(true, 'pop-up-menu');
+    } catch {
+      focusBarWindow.setAlwaysOnTop(true);
+    }
+  }
+  try {
+    focusBarWindow.moveTop();
+  } catch {
+    /* ignore */
   }
 }
 
@@ -496,13 +555,10 @@ function showOverlayDrawing() {
     // Hidden overlay often reports innerWidth/innerHeight as 0; re-send bounds after show.
     resizeOverlayToVirtualScreen();
     win.webContents.send('overlay:set-drawing', { drawing: true });
-    if (focusBarWindow && !focusBarWindow.isDestroyed()) {
-      try {
-        focusBarWindow.moveTop();
-      } catch {
-        /* ignore */
-      }
-    }
+    setImmediate(() => {
+      raiseFocusBarAboveOverlay();
+      setTimeout(() => raiseFocusBarAboveOverlay(), 80);
+    });
   });
 }
 
@@ -514,13 +570,10 @@ function showOverlayPassthrough() {
     overlayWindow.setIgnoreMouseEvents(true, { forward: true });
     overlayWindow.setFocusable(false);
     overlayWindow.webContents.send('overlay:request-grounding');
-    if (focusBarWindow && !focusBarWindow.isDestroyed()) {
-      try {
-        focusBarWindow.moveTop();
-      } catch {
-        /* ignore */
-      }
-    }
+    setImmediate(() => {
+      raiseFocusBarAboveOverlay();
+      setTimeout(() => raiseFocusBarAboveOverlay(), 80);
+    });
   });
 }
 
@@ -531,6 +584,7 @@ function hideOverlayFully() {
     overlayWindow.webContents.send('overlay:clear');
     overlayWindow.hide();
     overlayWindow.setIgnoreMouseEvents(true, { forward: true });
+    raiseFocusBarAboveOverlay();
   });
 }
 
@@ -559,16 +613,20 @@ function createWindow() {
     return { action: 'deny' };
   });
 
+  /* Focus bar: show while Iris is minimized during a live session; hide when the user restores/focuses Iris.
+   * `restore`/`focus` can still fire briefly after “Done” on focus regions (overlay + IPC); those are
+   * suppressed for a few seconds via focusBarAutoHideSuppressedUntil. Only Stop share ends capture. */
   win.on('minimize', () => {
     if (sessionLive) showFocusBar();
   });
 
   win.on('restore', () => {
-    hideFocusBar();
+    if (sessionLive) hideFocusBarForMainWindowActivation();
   });
 
-  win.on('show', () => {
-    if (!win.isMinimized()) hideFocusBar();
+  win.on('focus', () => {
+    if (!sessionLive || win.isMinimized()) return;
+    hideFocusBarForMainWindowActivation();
   });
 
   win.on('closed', () => {
@@ -600,6 +658,7 @@ app.whenReady().then(() => {
       whenOverlayReady(overlayWindow, () => resizeOverlayToVirtualScreen());
     }
     positionFocusBar();
+    raiseFocusBarAboveOverlay();
   });
 
   app.on('activate', () => {
@@ -702,6 +761,60 @@ ipcMain.on('focus-bar:stop-share', () => {
   }
 });
 
+function ipcSetObservationMode(_e, mode) {
+  if (mode !== 'ambient' && mode !== 'silent') return;
+  observationMode = mode;
+  broadcastObservationMode();
+}
+
+ipcMain.on('iris:set-observation-mode', ipcSetObservationMode);
+ipcMain.on('focus-bar:set-observation-mode', ipcSetObservationMode);
+
+ipcMain.handle('iris:get-observation-mode', () => ({ mode: observationMode }));
+
+async function ipcExportScreenFile(_e, payload) {
+  const apiKey = (process.env.GEMINI_API_KEY || '').trim();
+  if (!apiKey) {
+    throw new Error('Missing GEMINI_API_KEY in .env');
+  }
+  const imageBase64 = typeof payload?.imageBase64 === 'string' ? payload.imageBase64.trim() : '';
+  if (!imageBase64) {
+    throw new Error('No screen image — share your screen first.');
+  }
+  const hint = typeof payload?.title === 'string' ? payload.title.trim() : '';
+  const fmt = payload?.format === 'txt' ? 'txt' : 'xlsx';
+
+  if (fmt === 'txt') {
+    const { title, text } = await extractTextFileJson(apiKey, imageBase64, hint);
+    const buf = buildTxtBuffer(text);
+    const base64 = buf.toString('base64');
+    const stem = String(title)
+      .replace(/[^\w\-]+/g, '_')
+      .replace(/^_+|_+$/g, '')
+      .slice(0, 60);
+    const filename = `${stem || 'screen-text'}.txt`;
+    return { filename, base64, format: 'txt', byteLength: buf.length };
+  }
+
+  const { title, rows } = await extractChartJson(apiKey, imageBase64, hint);
+  if (!rows.length) {
+    throw new Error('No chart or table data could be read from the image.');
+  }
+  const buf = buildXlsxBuffer(rows, title);
+  const base64 = buf.toString('base64');
+  const stem = String(title)
+    .replace(/[^\w\-]+/g, '_')
+    .replace(/^_+|_+$/g, '')
+    .slice(0, 60);
+  const filename = `${stem || 'chart-data'}.xlsx`;
+  return { filename, base64, format: 'xlsx', rowCount: rows.length };
+}
+
+ipcMain.handle('iris:export-screen-file', ipcExportScreenFile);
+ipcMain.handle('iris:build-xlsx-from-screen', async (e, payload) =>
+  ipcExportScreenFile(e, { ...payload, format: 'xlsx' })
+);
+
 ipcMain.on('iris:set-session-live', (_e, live) => {
   sessionLive = !!live;
   if (!sessionLive) {
@@ -768,6 +881,10 @@ ipcMain.on('focus-bar:add-regions', () => {
 
 ipcMain.on('focus-bar:done-drawing', () => {
   if (!sessionLive) return;
+  /* Block auto-hide briefly: restore/focus on the main window often fire spuriously right after
+   * overlay passthrough + focus-grounding IPC (~100–600ms). Keep this window short so a real
+   * taskbar restore still hides the bar soon after. */
+  focusBarAutoHideSuppressedUntil = Date.now() + 750;
   showOverlayPassthrough();
 });
 
