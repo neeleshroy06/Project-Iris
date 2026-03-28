@@ -8,12 +8,14 @@ const {
   Menu,
 } = require('electron');
 const path = require('path');
+const fs = require('fs');
 const { execFile } = require('child_process');
 require('dotenv').config({ path: path.join(__dirname, '.env') });
 
 const shellPreload = path.join(__dirname, 'preload-shell.js');
-/** Window / taskbar branding (replaces default Electron icon when set on BrowserWindow). */
-const APP_ICON = path.join(__dirname, 'renderer', 'assets', 'iris-logo.png');
+/** Window / taskbar branding — only passed if the file exists (avoids startup issues on some Windows setups). */
+const APP_ICON_PATH = path.join(__dirname, 'renderer', 'assets', 'iris-logo.png');
+const APP_ICON = fs.existsSync(APP_ICON_PATH) ? APP_ICON_PATH : undefined;
 const {
   extractChartJson,
   buildXlsxBuffer,
@@ -24,6 +26,13 @@ const { extractMapsLinkJson } = require('./maps-from-screen');
 
 const memoryStore = require('./memory-store');
 const googleCalendar = require('./google-calendar');
+
+process.on('uncaughtException', (err) => {
+  console.error('[iris] uncaughtException:', err);
+});
+process.on('unhandledRejection', (reason) => {
+  console.error('[iris] unhandledRejection:', reason);
+});
 
 let mainWindow = null;
 let focusBarWindow = null;
@@ -655,7 +664,7 @@ function createWindow() {
     minWidth: 720,
     minHeight: 640,
     title: 'Iris — Gemini Live',
-    icon: APP_ICON,
+    ...(APP_ICON ? { icon: APP_ICON } : {}),
     backgroundColor: '#0f1e38',
     webPreferences: {
       preload: path.join(__dirname, 'preload.js'),
@@ -667,7 +676,22 @@ function createWindow() {
 
   mainWindow = win;
 
-  win.loadFile(path.join(__dirname, 'renderer', 'index.html'));
+  const indexHtml = path.join(__dirname, 'renderer', 'index.html');
+  if (!fs.existsSync(indexHtml)) {
+    console.error('[iris] Missing file:', indexHtml);
+  }
+  win.webContents.on('did-fail-load', (event, errorCode, errorDescription, validatedURL, isMainFrame) => {
+    if (isMainFrame) {
+      console.error('[iris] did-fail-load', { errorCode, errorDescription, validatedURL });
+    }
+  });
+  win.webContents.on('render-process-gone', (event, details) => {
+    console.error('[iris] render-process-gone', details);
+  });
+
+  win.loadFile(indexHtml).catch((err) => {
+    console.error('[iris] loadFile failed:', err);
+  });
 
   win.webContents.setWindowOpenHandler(({ url }) => {
     shell.openExternal(url);
@@ -711,7 +735,7 @@ function createWindow() {
 app.whenReady().then(() => {
   Menu.setApplicationMenu(null);
 
-  if (process.platform === 'darwin' && app.dock) {
+  if (process.platform === 'darwin' && app.dock && APP_ICON) {
     try {
       app.dock.setIcon(APP_ICON);
     } catch {
@@ -730,7 +754,12 @@ app.whenReady().then(() => {
     }
   );
 
-  createWindow();
+  try {
+    createWindow();
+  } catch (err) {
+    console.error('[iris] createWindow threw:', err);
+    throw err;
+  }
 
   screen.on('display-metrics-changed', () => {
     if (overlayWindow && !overlayWindow.isDestroyed()) {

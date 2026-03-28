@@ -160,7 +160,7 @@ body {
   overflow: hidden;
 }
 
-/* Hidden until “Get started” — paired with opaque .welcome-screen so home UI cannot show through */
+/* Hidden until “Get started” — no peek-through of main UI; welcome can stay transparent so .app-bg shows */
 #mainApp.main-app--behind-welcome {
   display: none !important;
 }
@@ -1206,8 +1206,8 @@ h1 {
   align-items: stretch;
   justify-content: center;
   padding: 28px 24px 48px;
-  /* Opaque — was transparent, so #mainApp (above .app-bg) showed through and looked “merged” with landing */
-  background: var(--bg);
+  /* Transparent: animated .app-bg (blobs + grain) shows through. Main shell is display:none while welcome is open. */
+  background: transparent;
   overflow: auto;
 }
 
