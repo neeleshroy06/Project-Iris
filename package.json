@@ -12,7 +12,6 @@
     "live-api"
   ],
   "author": "",
-  "license": "MIT",
   "devDependencies": {
     "electron": "^34.0.0"
   },

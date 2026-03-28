@@ -1,12 +1,111 @@
 # Iris
 
-Desktop voice + screen assistant powered by **Google Gemini Multimodal Live**. Talk naturally; Iris replies with speech and sees periodic screen captures so answers match what’s on your display.
+Desktop voice + screen assistant powered by **[Google Gemini Multimodal Live](https://ai.google.dev/gemini-api/docs/multimodal-live)**. Talk naturally; Iris answers with speech and text, and can use periodic screen captures so replies match what you’re looking at.
+
+---
+
+## Architecture
+
+High-level flow:
+
+```mermaid
+flowchart TB
+  subgraph Renderer["Renderer (Chromium)"]
+    UI[index.html / app.js]
+    GL[gemini-live.js — Live WebSocket]
+    Media[media.js — mic, screen, PCM]
+    UI --> GL
+    UI --> Media
+  end
+
+  subgraph Preload["Preload bridges"]
+    P1[preload.js — window.iris]
+    P2[preload-shell.js — window.irisShell]
+  end
+
+  subgraph Main["Main process (Electron)"]
+    BW[BrowserWindows]
+    IPC[ipcMain handlers]
+    XLS[xlsx-from-chart.js]
+    MAP[maps-from-screen.js]
+    CAL[google-calendar.js]
+    MEM[memory-store.js]
+    BW --> IPC
+    IPC --> XLS
+    IPC --> MAP
+    IPC --> CAL
+    IPC --> MEM
+  end
+
+  Renderer <--> Preload
+  Preload <--> Main
+
+  subgraph Cloud["Google APIs"]
+    LIVE[Live API — WebSocket]
+    REST[Generative Language REST]
+    GCAL[Calendar API]
+  end
+
+  GL <--> LIVE
+  XLS --> REST
+  MAP --> REST
+  CAL --> GCAL
+```
+
+**Windows**
+
+| Window | Purpose |
+|--------|---------|
+| **Main** | Session controls, transcript, composer (typed messages to Live), screen preview, theme toggle, welcome screen on first paint. |
+| **Overlay** | Full-screen transparent layer: draw **focus regions**, passthrough when done, per-region **dismiss (×)**; rects map to **focus grounding** text for the model. |
+| **Focus bar** | Shown when the main window is **minimized** during a live session: stop share, observation mode, **Add focus** / **Done**, **Type** composer, and a **dock** for downloads & links (same actions as the main panel). |
+
+**Rough data path:** one **Live** session handles audio + tool calls; **JPEG** frames (~1 fps) go to the model for screen context; **tool** calls (export, Maps, Calendar) are handled in the main process and results show in the transcript (and focus bar dock when it’s open). IPC wiring lives in `main.js`, `preload.js`, and `preload-shell.js`.
+
+---
+
+## Stack
+
+| Area | Notes |
+|------|--------|
+| **App shell** | Electron 34, `contextIsolation`, separate preloads for main vs overlay/focus-bar |
+| **Live model** | `gemini-3.1-flash-live-preview` over WebSocket (`BidiGenerateContent`) |
+| **Audio** | Web Audio + **worklets** for capture/playback paths (`renderer/audio-processors/`) |
+| **Screen** | `getDisplayMedia` / `desktopCapturer`; optional focus rectangles baked into sent frames |
+| **Exports** | REST JSON extraction from a frame → `.xlsx` (SheetJS) or `.txt` (`xlsx-from-chart.js`) |
+| **Maps** | Frame + hint → URL (`maps-from-screen.js`) |
+| **Calendar** | OAuth + Calendar API (`googleapis`, `google-calendar.js`) |
+| **Memory** | Local turns + optional consolidation (`memory-store.js`) |
+| **UI** | Vanilla HTML/CSS/JS |
+
+---
+
+## Project layout (main pieces)
+
+```
+Project_Iris/
+├── main.js                 # Windows, IPC, exports, Maps, Calendar
+├── preload.js / preload-shell.js
+├── google-calendar.js
+├── memory-store.js
+├── maps-from-screen.js
+├── xlsx-from-chart.js
+└── renderer/
+    ├── index.html, app.js, styles.css
+    ├── focus-bar.*           # Compact bar + composer + dock
+    ├── overlay-focus.*       # Focus regions overlay
+    └── lib/                  # gemini-live, media, prompts, tools
+```
+
+---
 
 ## Requirements
 
 - **Node.js** (LTS recommended)
-- A **Gemini API key** with access to the Live model ([Google AI Studio](https://aistudio.google.com/apikey))
-- Microphone and (optional) screen-capture permission when prompted by the OS
+- **Gemini API key** with Live access ([Google AI Studio](https://aistudio.google.com/apikey))
+- Microphone; OS permission to **share screen** when you use it
+
+---
 
 ## Quick start
 
@@ -16,64 +115,54 @@ cd Project_Iris
 npm install
 ```
 
-Copy `.env.example` to `.env` and set your key:
+Copy `.env.example` to `.env`:
 
 ```env
 GEMINI_API_KEY=your_key_here
 ```
 
-Run the app:
+Run:
 
 ```bash
 npm start
 ```
 
-On first launch, use **Get started** on the welcome screen, then **Start session** and **Share screen** when you want Iris to use your display.
+First run: **Get started** → **Start session** → **Share screen** when you want screen context. Optional env vars (export/memory models, Maps, OAuth) are described in **`.env.example`**.
 
-## What you get
+---
 
-| Area | What it does |
-|------|----------------|
-| **Live voice** | Bidirectional audio with the Gemini Live WebSocket; transcript in the side panel |
-| **Screen share** | Still frames (~1 fps) to the model; in-app preview |
-| **Observation** | **Silent** — speaks only when you engage; **Ambient** — brief notes on meaningful screen changes (pick before starting; new session if you change mode) |
-| **Focus regions** | Draw regions on screen (when using the shell) so Iris can align with numbered areas |
-| **Exports** | Optional spreadsheet or text export from the shared screen (REST + vision) |
-| **Maps link** | Ask for a Google Maps link to something on screen (map pin, address, listing); uses Gemini on the latest frame + optional hint for focus |
-| **Memory** | Long-term notes from past sessions are stored under the app user data folder and merged into the next session (does not live in this repo) |
-| **Google Calendar** | When Iris needs your Google email, type it in the **text box under the conversation** and press **Enter** (sent to Live—no spelling aloud). Browser sign-in must match that account. |
-| **Themes** | Dark / light toggle on welcome and main UI |
+## Features (checklist)
 
-Optional environment variables are documented in `.env.example` (e.g. models for file export and memory consolidation).
+| Feature | What it is |
+|---------|------------|
+| **Voice session** | Bidirectional audio with Gemini Live; live / connecting / idle status |
+| **Transcript** | User + Iris text; pending streaming bubbles |
+| **Typed input** | Composer under **Conversation** (and on the **focus bar** when minimized) — e.g. Google email for Calendar |
+| **Screen share** | Pick display or window; in-app preview; frames sent to the model |
+| **Observation mode** | **Silent** (speak when you engage) vs **Ambient** (brief notes on big screen changes) — set **before** starting; changing it needs a **new session** |
+| **Focus regions** | **Add focus** → draw rects on overlay → **Done** → numbered regions + grounding for the model; **×** on each region to remove |
+| **Stop / session end** | Stops mic, capture, Live, clears overlay and focus bar dock |
+| **Exports** | Tools: **Excel (.xlsx)** from charts/tables on screen, **.txt** from visible text — download in transcript + dock |
+| **Google Maps link** | Tool: build an **openable Maps URL** from what’s visible (+ optional hint / focus region) |
+| **Google Calendar** | Optional: create events via OAuth (see below); email in composer |
+| **Long-term memory** | Session notes consolidated over time (local storage under app user data) |
+| **Themes** | Dark / light (welcome + main window) |
+| **Welcome screen** | Onboarding hero; opaque layer so it doesn’t show the main UI underneath |
 
-### Google Calendar (optional)
+---
 
-1. In [Google Cloud Console](https://console.cloud.google.com/), enable **Google Calendar API** and create an **OAuth client ID** of type **Desktop app**.
-2. On the **OAuth consent screen**, include scopes for **Calendar** and **user email** (Iris requests `calendar.events` and `userinfo.email` so the address you say in chat can match the account you sign into).
-3. Under **Authorized redirect URIs**, add exactly: `http://127.0.0.1:45231/oauth2callback` (or your custom `GOOGLE_OAUTH_REDIRECT_URI` + same entry in Console).
-4. Put **Client ID** and **Client secret** in `.env` (`GOOGLE_OAUTH_CLIENT_ID`, `GOOGLE_OAUTH_CLIENT_SECRET`).
-5. In a live session, say you want a calendar event. Iris asks which **Google email** to use—you answer by voice. Then the tool runs; if needed, your **browser** opens once so you can sign in with **that same** Google account.
+## Google Calendar (optional)
 
-**Error 403 `access_denied` — “only developer-approved testers” / “has not completed verification”**
+1. In [Google Cloud Console](https://console.cloud.google.com/), enable **Google Calendar API** and create an **OAuth client ID** (type **Desktop**).  
+2. Consent screen: Calendar + **userinfo.email**; redirect **`http://127.0.0.1:45231/oauth2callback`** (or match `GOOGLE_OAUTH_REDIRECT_URI` in `.env` and in Console).  
+3. Set `GOOGLE_OAUTH_CLIENT_ID` and `GOOGLE_OAUTH_CLIENT_SECRET` in `.env` (see `.env.example`).  
 
-This usually means the OAuth app is in **Testing**, and your Google account is **not** on the allowlist yet. It is **not** because the Calendar API or `.env` client ID is wrong.
+If OAuth is in **Testing**, add your Google account under **Test users**. For **“App isn’t verified”**, use **Advanced → continue**.
 
-1. Open [Google Cloud Console](https://console.cloud.google.com/) → select **the same project** as your OAuth client.
-2. **APIs & Services** → **OAuth consent screen** (left menu).
-3. Scroll to **Test users** (under *Audience* on some layouts).
-4. Click **+ ADD USERS** and add **the same Gmail you use when the browser opens** (e.g. the address shown on Google’s error page).
-5. Click **Save**. Wait a minute.
-6. In Iris, try the calendar flow again (you may need to sign out of Google in the browser or use a private window so Google shows the consent screen again).
-
-**Optional:** If **Publishing status** is **Testing**, only those test users work. To allow any Google user you’d switch to **In production** (Google may ask for app verification for sensitive scopes—fine for personal use to stay on Testing + test users).
-
-**“This app isn’t verified” (different warning):** click **Advanced** → **Go to Iris (unsafe)**. That screen is separate from the “testers” block above.
+---
 
 ## Security
 
-- Keep `.env` **local** and **out of version control**. Do not publish a build that embeds your API key for untrusted users; prefer bring-your-own-key or a backend for public distribution.
-- **Google OAuth** secrets in `.env` are as sensitive as your API key. Calendar tokens are stored under the app user data path (encrypted when the OS supports Electron `safeStorage`).
-
-## License
-
-MIT
+- Don’t commit **`.env`**. Treat API keys and OAuth secrets like production secrets.  
+- Don’t distribute a build that bakes in your key for untrusted users.  
+- Calendar tokens are stored under Electron’s user data path (OS **safeStorage** when available).
