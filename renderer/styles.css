@@ -113,38 +113,6 @@ h1 {
   gap: 10px;
 }
 
-.hint {
-  font-size: 0.8rem;
-  color: var(--muted);
-  flex: 1;
-  min-width: 200px;
-}
-
-.compose {
-  display: flex;
-  gap: 10px;
-}
-
-.compose input {
-  flex: 1;
-  background: var(--surface);
-  border: 1px solid var(--border);
-  border-radius: var(--radius);
-  padding: 12px 14px;
-  color: var(--text);
-  font-size: 0.95rem;
-  outline: none;
-}
-
-.compose input:focus {
-  border-color: var(--accent-dim);
-  box-shadow: 0 0 0 2px rgba(124, 156, 255, 0.2);
-}
-
-.compose input:disabled {
-  opacity: 0.45;
-}
-
 .btn {
   font-family: inherit;
   font-size: 0.9rem;
@@ -221,13 +189,6 @@ h1 {
   text-transform: uppercase;
   letter-spacing: 0.08em;
   color: var(--muted);
-}
-
-.panel-note {
-  margin: 0 0 10px;
-  font-size: 0.78rem;
-  color: var(--muted);
-  line-height: 1.4;
 }
 
 .preview-wrap {

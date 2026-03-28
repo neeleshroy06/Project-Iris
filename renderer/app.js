@@ -14,8 +14,6 @@ const els = {
   btnStart: $('btnStart'),
   btnStop: $('btnStop'),
   btnShareScreen: $('btnShareScreen'),
-  btnSendText: $('btnSendText'),
-  textSend: $('textSend'),
   transcript: $('transcript'),
   previewWrap: $('previewWrap'),
   previewVideo: $('previewVideo'),
@@ -33,6 +31,13 @@ let setupWatchdog = null;
 
 /** Set when screen capture comes from Electron desktopCapturer picker (e.g. `window:` / `screen:` id). */
 let lastElectronCaptureId = null;
+
+/** Normalized 0–1 rects drawn on each JPEG when mapping is confident (from main process). */
+let captureFocusNormRegions = null;
+
+/** JPEG encode size from ScreenCapture (what Gemini receives). */
+let lastEncodeWidth = 0;
+let lastEncodeHeight = 0;
 
 let pendingUserEl = null;
 let pendingIrisEl = null;
@@ -57,8 +62,6 @@ function setStatus(mode, label) {
 function setRunning(running) {
   els.btnStart.disabled = running;
   els.btnStop.disabled = !running;
-  els.textSend.disabled = !running;
-  els.btnSendText.disabled = !running;
   if (!running) {
     els.btnShareScreen.disabled = true;
     els.btnShareScreen.textContent = 'Share screen';
@@ -70,17 +73,22 @@ function pushCaptureMetrics() {
   const v = els.previewVideo;
   const stream = v?.srcObject;
   if (!stream) {
+    window.__irisCaptureMeta = null;
     window.iris?.notifyCaptureMetrics?.(null);
     return;
   }
   const t = stream.getVideoTracks?.()?.[0];
   const settings = t?.getSettings?.() || {};
-  window.iris?.notifyCaptureMetrics?.({
+  const meta = {
     videoWidth: v.videoWidth || 0,
     videoHeight: v.videoHeight || 0,
+    encodeWidth: lastEncodeWidth || 0,
+    encodeHeight: lastEncodeHeight || 0,
     displaySurface: settings.displaySurface ?? null,
     electronSourceId: lastElectronCaptureId,
-  });
+  };
+  window.__irisCaptureMeta = meta;
+  window.iris?.notifyCaptureMetrics?.(meta);
 }
 
 function setScreenShareUi(active) {
@@ -96,7 +104,35 @@ function setScreenShareUi(active) {
     els.previewPlaceholder.classList.remove('hidden');
     els.btnShareScreen.textContent = 'Share screen';
     lastElectronCaptureId = null;
+    lastEncodeWidth = 0;
+    lastEncodeHeight = 0;
+    window.__irisCaptureMeta = null;
+    captureFocusNormRegions = null;
     window.iris?.notifyCaptureMetrics?.(null);
+  }
+}
+
+/** Window or tab share (not full monitor) — compact UI works best. */
+function isWindowLikeShare(displaySurface, electronSourceId) {
+  if (displaySurface === 'window' || displaySurface === 'browser') return true;
+  if (electronSourceId && String(electronSourceId).startsWith('window:')) return true;
+  return false;
+}
+
+function tryMinimizeForWindowShare() {
+  if (!session?.connected) return;
+  const stream = els.previewVideo?.srcObject;
+  const t = stream?.getVideoTracks?.()?.[0];
+  const settings = t?.getSettings?.() || {};
+  const displaySurface = settings.displaySurface ?? null;
+  if (!isWindowLikeShare(displaySurface, lastElectronCaptureId)) return;
+  try {
+    window.iris?.minimizeCompact?.({
+      electronSourceId: lastElectronCaptureId,
+      windowTitleHint: t?.label || '',
+    });
+  } catch {
+    /* ignore */
   }
 }
 
@@ -185,16 +221,23 @@ async function startScreenShare() {
 
     const stream = await acquireScreenVideoStream();
 
+    captureFocusNormRegions = null;
     screenCap = new ScreenCapture((b64) => session.sendScreenJpegBase64(b64), {
       fps: 1,
       maxWidth: 1280,
       quality: 0.72,
+      getFocusRegions: () => captureFocusNormRegions || [],
     });
-    await screenCap.start(stream);
+    const capInfo = await screenCap.start(stream);
+    lastEncodeWidth = capInfo?.width || 0;
+    lastEncodeHeight = capInfo?.height || 0;
     setScreenShareUi(true);
     screenCap.attachPreview(els.previewVideo);
     requestAnimationFrame(() => pushCaptureMetrics());
-    setTimeout(() => pushCaptureMetrics(), 300);
+    setTimeout(() => {
+      pushCaptureMetrics();
+      tryMinimizeForWindowShare();
+    }, 320);
   } catch (e) {
     console.error(e);
     setScreenShareUi(false);
@@ -212,6 +255,16 @@ async function startScreenShare() {
   } finally {
     els.btnShareScreen.disabled = false;
   }
+}
+
+function stopScreenShareOnly() {
+  try {
+    screenCap?.stop();
+  } catch {
+    /* ignore */
+  }
+  screenCap = null;
+  setScreenShareUi(false);
 }
 
 function ensurePendingBubble(role) {
@@ -397,15 +450,9 @@ async function startSession() {
   }, 25000);
 }
 
-function sendTypedText() {
-  const t = els.textSend.value.trim();
-  if (!t || !session?.connected) return;
-  session.sendText(t);
-  els.textSend.value = '';
-}
-
 els.previewVideo.addEventListener('loadedmetadata', () => {
   pushCaptureMetrics();
+  tryMinimizeForWindowShare();
 });
 
 if (typeof window.iris?.onApplyFocusGrounding === 'function') {
@@ -414,13 +461,25 @@ if (typeof window.iris?.onApplyFocusGrounding === 'function') {
   });
 }
 
+if (typeof window.iris?.onCaptureFocusRegions === 'function') {
+  window.iris.onCaptureFocusRegions((payload) => {
+    if (payload?.composite && Array.isArray(payload.regions) && payload.regions.length) {
+      captureFocusNormRegions = payload.regions;
+    } else {
+      captureFocusNormRegions = null;
+    }
+  });
+}
+
+if (typeof window.iris?.onStopScreenShare === 'function') {
+  window.iris.onStopScreenShare(() => {
+    stopScreenShareOnly();
+  });
+}
+
 els.btnStart.addEventListener('click', () => startSession());
 els.btnStop.addEventListener('click', () => stopAll());
 els.btnShareScreen.addEventListener('click', () => void startScreenShare());
-els.btnSendText.addEventListener('click', sendTypedText);
-els.textSend.addEventListener('keydown', (e) => {
-  if (e.key === 'Enter') sendTypedText();
-});
 
 window.addEventListener('beforeunload', () => {
   stopAll();

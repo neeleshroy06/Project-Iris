@@ -2,7 +2,7 @@ const { contextBridge, ipcRenderer } = require('electron');
 
 contextBridge.exposeInMainWorld('irisShell', {
   send: (channel, data) => {
-    const allowed = ['focus-bar:add-regions', 'focus-bar:done-drawing'];
+    const allowed = ['focus-bar:add-regions', 'focus-bar:done-drawing', 'focus-bar:stop-share'];
     if (allowed.includes(channel)) ipcRenderer.send(channel, data);
   },
   on: (channel, fn) => {

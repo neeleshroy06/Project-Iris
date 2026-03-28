@@ -24,23 +24,11 @@
         <button type="button" id="btnStart" class="btn btn-primary">Start session</button>
         <button type="button" id="btnStop" class="btn" disabled>Stop</button>
         <button type="button" id="btnShareScreen" class="btn btn-secondary" disabled>Share screen</button>
-        <div class="hint">
-          After <strong>Live</strong>, share your screen. <strong>Minimize</strong> Iris to show the bottom-left bar (blinking green = active) and use <strong>Add focus regions</strong> on your desktop.
-        </div>
-      </section>
-
-      <section class="compose">
-        <label class="sr-only" for="textSend">Send text to the model</label>
-        <input type="text" id="textSend" placeholder="Optional: type a message (Enter to send)" autocomplete="off" disabled />
-        <button type="button" id="btnSendText" class="btn btn-ghost" disabled>Send</button>
       </section>
 
       <main class="main">
         <div class="panel preview-panel">
           <h2>Screen preview</h2>
-          <p class="panel-note">
-            <strong>1 fps</strong> to the model. After you click <strong>Done drawing</strong> on the minimized bar, Iris sends <strong>focus region coordinates as text</strong> so Gemini can align regions with the image—even for single-window share. Full-display share gives the most reliable mapping.
-          </p>
           <div id="previewWrap" class="preview-wrap">
             <video id="previewVideo" autoplay muted playsinline></video>
             <div id="previewPlaceholder" class="preview-placeholder">Share a screen to see preview</div>

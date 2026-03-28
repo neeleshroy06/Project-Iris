@@ -1,6 +1,10 @@
 (() => {
   const canvas = document.getElementById('cv');
-  const ctx = canvas.getContext('2d');
+  const ctx = canvas.getContext('2d', { alpha: true });
+
+  /** Logical size (DIP / CSS px) — must match rects and main-process virtual bounds mapping. */
+  let logicalW = 0;
+  let logicalH = 0;
 
   /** @type {{ x: number, y: number, w: number, h: number }[]} */
   let rects = [];
@@ -8,11 +12,18 @@
   /** @type {{ start: { x: number, y: number }, curr: { x: number, y: number } } | null} */
   let drag = null;
 
-  function fitCanvas() {
-    const w = window.innerWidth;
-    const h = window.innerHeight;
-    canvas.width = w;
-    canvas.height = h;
+  /**
+   * @param {number} [w] - from main `getVirtualBounds()` (use when window is hidden; innerWidth is often 0)
+   * @param {number} [h]
+   */
+  function fitCanvas(w, h) {
+    const aw = typeof w === 'number' && w > 0 ? w : window.innerWidth;
+    const ah = typeof h === 'number' && h > 0 ? h : window.innerHeight;
+    if (aw < 1 || ah < 1) return;
+    logicalW = aw;
+    logicalH = ah;
+    canvas.width = aw;
+    canvas.height = ah;
     redraw();
   }
 
@@ -27,6 +38,8 @@
     }
 
     rects.forEach((r, i) => {
+      ctx.fillStyle = 'rgba(124, 156, 255, 0.2)';
+      ctx.fillRect(r.x, r.y, r.w, r.h);
       ctx.strokeStyle = '#7c9cff';
       ctx.lineWidth = Math.max(2, Math.round(w / 600));
       ctx.setLineDash([]);
@@ -54,8 +67,10 @@
 
   function clientToCanvas(ev) {
     const r = canvas.getBoundingClientRect();
-    const sx = canvas.width / r.width;
-    const sy = canvas.height / r.height;
+    const lw = logicalW || canvas.width;
+    const lh = logicalH || canvas.height;
+    const sx = lw / Math.max(1, r.width);
+    const sy = lh / Math.max(1, r.height);
     return {
       x: (ev.clientX - r.left) * sx,
       y: (ev.clientY - r.top) * sy,
@@ -133,8 +148,8 @@
       redraw();
     });
 
-    window.irisShell.on('overlay:reposition', () => {
-      fitCanvas();
+    window.irisShell.on('overlay:reposition', (payload) => {
+      fitCanvas(payload?.width, payload?.height);
     });
 
     window.irisShell.on('overlay:clear', () => {
@@ -149,8 +164,8 @@
       try {
         await window.irisShell.invokeFocusRectsUpdate({
           rects: rects.map((r) => ({ x: r.x, y: r.y, w: r.w, h: r.h })),
-          canvasWidth: canvas.width,
-          canvasHeight: canvas.height,
+          canvasWidth: logicalW || canvas.width,
+          canvasHeight: logicalH || canvas.height,
         });
       } catch (e) {
         console.error('focus grounding', e);
@@ -158,5 +173,5 @@
     });
   }
 
-  fitCanvas();
+  requestAnimationFrame(() => fitCanvas());
 })();

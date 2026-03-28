@@ -119,6 +119,8 @@ export class ScreenCapture {
     this._fps = options.fps ?? 1;
     this._maxWidth = options.maxWidth ?? 1280;
     this._quality = options.quality ?? 0.72;
+    /** @type {() => Array<{ nx: number, ny: number, nw: number, nh: number, label?: number }>} */
+    this._getFocusRegions = typeof options.getFocusRegions === 'function' ? options.getFocusRegions : () => [];
     this._timer = null;
     this._stream = null;
     this._video = null;
@@ -177,6 +179,26 @@ export class ScreenCapture {
       const cw = this._captureW;
       const ch = this._captureH;
       ctx.drawImage(this._video, 0, 0, cw, ch);
+      const regions = this._getFocusRegions();
+      if (regions?.length) {
+        const lw = Math.max(2, Math.round(cw / 400));
+        ctx.save();
+        ctx.strokeStyle = 'rgba(255, 48, 48, 0.92)';
+        ctx.lineWidth = lw;
+        ctx.setLineDash([]);
+        ctx.font = `600 ${Math.max(12, Math.round(cw / 70))}px system-ui, sans-serif`;
+        ctx.fillStyle = 'rgba(255, 48, 48, 0.95)';
+        regions.forEach((r) => {
+          const x = r.nx * cw;
+          const y = r.ny * ch;
+          const rw = r.nw * cw;
+          const rh = r.nh * ch;
+          ctx.strokeRect(x, y, rw, rh);
+          const num = r.label != null ? r.label : 1;
+          ctx.fillText(String(num), x + lw + 2, y + lw + Math.max(12, Math.round(ch / 55)));
+        });
+        ctx.restore();
+      }
       this._canvas.toBlob(
         (blob) => {
           if (!blob || !this._running) return;

@@ -24,6 +24,13 @@ body {
   box-shadow: 0 8px 32px rgba(0, 0, 0, 0.45);
 }
 
+.bar-actions {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-left: auto;
+}
+
 .brand {
   font-weight: 700;
   font-size: 15px;
@@ -79,4 +86,14 @@ body {
 
 .btn-done:hover {
   background: rgba(61, 214, 140, 0.22);
+}
+
+.btn-danger {
+  border-color: rgba(240, 113, 120, 0.55);
+  background: rgba(240, 113, 120, 0.12);
+  color: #f5b8bc;
+}
+
+.btn-danger:hover {
+  background: rgba(240, 113, 120, 0.24);
 }
