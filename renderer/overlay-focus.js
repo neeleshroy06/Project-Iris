@@ -12,18 +12,81 @@
   /** @type {{ start: { x: number, y: number }, curr: { x: number, y: number } } | null} */
   let drag = null;
 
+  /** Smallest positive value — avoids scrollbar gutter / subpixel mismatch (esp. vertical). */
+  function minViewportDim(...vals) {
+    const nums = vals.filter((n) => typeof n === 'number' && n > 0);
+    return nums.length ? Math.min(...nums) : 1;
+  }
+
+  /** Sync canvas CSS size to the visible client area only (never larger than the window). */
+  function applyViewportCss() {
+    const vv = window.visualViewport;
+    const vw = Math.max(
+      1,
+      Math.floor(
+        minViewportDim(
+          document.documentElement.clientWidth,
+          window.innerWidth,
+          vv?.width
+        )
+      )
+    );
+    const vh = Math.max(
+      1,
+      Math.floor(
+        minViewportDim(
+          document.documentElement.clientHeight,
+          window.innerHeight,
+          vv?.height
+        )
+      )
+    );
+    canvas.style.width = `${vw}px`;
+    canvas.style.height = `${vh}px`;
+    canvas.style.boxSizing = 'border-box';
+    canvas.style.maxWidth = '100%';
+    canvas.style.maxHeight = '100%';
+    canvas.style.left = '0';
+    canvas.style.top = '0';
+  }
+
+  function lockDocumentScroll() {
+    document.documentElement.style.overflow = 'hidden';
+    document.body.style.overflow = 'hidden';
+  }
+
+  lockDocumentScroll();
+  window.addEventListener(
+    'wheel',
+    (e) => {
+      e.preventDefault();
+    },
+    { passive: false, capture: true }
+  );
+
   /**
-   * @param {number} [w] - from main `getVirtualBounds()` (use when window is hidden; innerWidth is often 0)
+   * @param {number} [w] - content width from main `getContentBounds()` (matches IPC mapping)
    * @param {number} [h]
    */
   function fitCanvas(w, h) {
-    const aw = typeof w === 'number' && w > 0 ? w : window.innerWidth;
-    const ah = typeof h === 'number' && h > 0 ? h : window.innerHeight;
-    if (aw < 1 || ah < 1) return;
-    logicalW = aw;
-    logicalH = ah;
-    canvas.width = aw;
-    canvas.height = ah;
+    const hasIpc = typeof w === 'number' && w > 0 && typeof h === 'number' && h > 0;
+    if (hasIpc) {
+      logicalW = w;
+      logicalH = h;
+      canvas.width = w;
+      canvas.height = h;
+    } else if (logicalW >= 1 && logicalH >= 1) {
+      /* Window resize: keep bitmap + logical from last IPC; only adjust CSS to viewport. */
+    } else {
+      const iw = window.innerWidth;
+      const ih = window.innerHeight;
+      if (iw < 1 || ih < 1) return;
+      logicalW = iw;
+      logicalH = ih;
+      canvas.width = iw;
+      canvas.height = ih;
+    }
+    applyViewportCss();
     redraw();
   }
 
@@ -38,9 +101,9 @@
     }
 
     rects.forEach((r, i) => {
-      ctx.fillStyle = 'rgba(124, 156, 255, 0.2)';
+      ctx.fillStyle = 'rgba(69, 104, 130, 0.35)';
       ctx.fillRect(r.x, r.y, r.w, r.h);
-      ctx.strokeStyle = '#7c9cff';
+      ctx.strokeStyle = '#d2c1b6';
       ctx.lineWidth = Math.max(2, Math.round(w / 600));
       ctx.setLineDash([]);
       ctx.strokeRect(r.x, r.y, r.w, r.h);
@@ -139,7 +202,10 @@
     canvas.style.cursor = on ? 'crosshair' : 'default';
   }
 
-  window.addEventListener('resize', fitCanvas);
+  window.addEventListener('resize', () => fitCanvas());
+  if (window.visualViewport) {
+    window.visualViewport.addEventListener('resize', () => fitCanvas());
+  }
 
   if (window.irisShell?.on) {
     window.irisShell.on('overlay:set-drawing', (payload) => {

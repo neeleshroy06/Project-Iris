@@ -5,6 +5,7 @@ const {
   shell,
   desktopCapturer,
   screen,
+  Menu,
 } = require('electron');
 const path = require('path');
 const { execFile } = require('child_process');
@@ -348,7 +349,7 @@ function positionFocusBar() {
   if (!focusBarWindow || focusBarWindow.isDestroyed()) return;
   const primary = screen.getPrimaryDisplay();
   const b = primary.workArea;
-  const barW = 520;
+  const barW = 440;
   const barH = 54;
   focusBarWindow.setBounds({
     x: Math.round(b.x + b.width - barW - 12),
@@ -361,7 +362,7 @@ function positionFocusBar() {
 function ensureFocusBarWindow() {
   if (focusBarWindow && !focusBarWindow.isDestroyed()) return focusBarWindow;
   focusBarWindow = new BrowserWindow({
-    width: 520,
+    width: 440,
     height: 54,
     show: false,
     frame: false,
@@ -403,10 +404,11 @@ function ensureOverlayWindow() {
   if (overlayWindow && !overlayWindow.isDestroyed()) return overlayWindow;
   const vb = getVirtualBounds();
   overlayWindow = new BrowserWindow({
-    x: vb.x,
-    y: vb.y,
-    width: vb.width,
-    height: vb.height,
+    x: Math.round(vb.x),
+    y: Math.round(vb.y),
+    width: Math.round(vb.width),
+    height: Math.round(vb.height),
+    useContentSize: true,
     show: false,
     frame: false,
     transparent: true,
@@ -442,16 +444,27 @@ function ensureOverlayWindow() {
 function resizeOverlayToVirtualScreen() {
   if (!overlayWindow || overlayWindow.isDestroyed()) return;
   const vb = getVirtualBounds();
+  const rw = Math.round(vb.width);
+  const rh = Math.round(vb.height);
   overlayWindow.setBounds({
-    x: vb.x,
-    y: vb.y,
-    width: vb.width,
-    height: vb.height,
+    x: Math.round(vb.x),
+    y: Math.round(vb.y),
+    width: rw,
+    height: rh,
   });
-  overlayWindow.webContents.send('overlay:reposition', {
-    width: vb.width,
-    height: vb.height,
-  });
+  const sendContentSize = () => {
+    if (!overlayWindow || overlayWindow.isDestroyed()) return;
+    const cb = overlayWindow.getContentBounds();
+    const w = cb.width > 0 ? cb.width : rw;
+    const h = cb.height > 0 ? cb.height : rh;
+    overlayWindow.webContents.send('overlay:reposition', {
+      width: w,
+      height: h,
+    });
+  };
+  sendContentSize();
+  /* One tick later: bounds are sometimes applied asynchronously on Windows. */
+  setImmediate(sendContentSize);
 }
 
 function showFocusBar() {
@@ -528,7 +541,7 @@ function createWindow() {
     minWidth: 720,
     minHeight: 640,
     title: 'Iris — Gemini Live',
-    backgroundColor: '#0c0d10',
+    backgroundColor: '#0f1e38',
     webPreferences: {
       preload: path.join(__dirname, 'preload.js'),
       contextIsolation: true,
@@ -567,6 +580,8 @@ function createWindow() {
 }
 
 app.whenReady().then(() => {
+  Menu.setApplicationMenu(null);
+
   const { session } = require('electron');
   session.defaultSession.setPermissionRequestHandler(
     (webContents, permission, callback) => {

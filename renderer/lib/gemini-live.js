@@ -3,7 +3,25 @@
  * @see https://ai.google.dev/gemini-api/docs/live-api/get-started-websocket
  */
 
+import {
+  DEFAULT_LIVE_SYSTEM_INSTRUCTION,
+  LIVE_PROMPT_MODES,
+  LIVE_PROMPT_MODE_KEYS,
+  composeLivePrompt,
+  IRIS_IDENTITY,
+  IRIS_TECHNICAL_CONTEXT,
+} from './iris-live-prompts.js';
+
 export const MODEL_LIVE_FLASH = 'gemini-3.1-flash-live-preview';
+
+export {
+  DEFAULT_LIVE_SYSTEM_INSTRUCTION,
+  LIVE_PROMPT_MODES,
+  LIVE_PROMPT_MODE_KEYS,
+  composeLivePrompt,
+  IRIS_IDENTITY,
+  IRIS_TECHNICAL_CONTEXT,
+};
 
 const WS_PATH =
   'wss://generativelanguage.googleapis.com/ws/google.ai.generativelanguage.v1beta.GenerativeService.BidiGenerateContent';
@@ -86,9 +104,7 @@ export class GeminiLiveSession {
     this._model = options.model || MODEL_LIVE_FLASH;
     this._voiceName = options.voiceName || 'Kore';
     this._temperature = options.temperature ?? 0.9;
-    this._systemInstruction =
-      options.systemInstruction ||
-      `You are Iris, a concise, friendly desktop copilot. The user shares their screen as periodic still images (about one per second) and speaks aloud. Focus grounding messages include NATIVE_STREAM_PX and JPEG_SENT_PX sizes, then each region with norm_0_1 (0–1 vs the shared frame), native_stream_px, jpeg_px, and virtual_desktop_DIP (OS logical coordinates). Match those to the latest image when they say "region N". Keep spoken replies short and natural; avoid markdown walls unless asked.`;
+    this._systemInstruction = options.systemInstruction || DEFAULT_LIVE_SYSTEM_INSTRUCTION;
 
     this._ws = null;
     this.connected = false;

@@ -14,6 +14,7 @@ const els = {
   btnStart: $('btnStart'),
   btnStop: $('btnStop'),
   btnShareScreen: $('btnShareScreen'),
+  btnThemeToggle: $('btnThemeToggle'),
   transcript: $('transcript'),
   previewWrap: $('previewWrap'),
   previewVideo: $('previewVideo'),
@@ -22,6 +23,81 @@ const els = {
   desktopPickerGrid: $('desktopPickerGrid'),
   desktopPickerCancel: $('desktopPickerCancel'),
 };
+
+const THEME_STORAGE_KEY = 'iris-theme';
+
+function applyTheme(theme) {
+  const t = theme === 'light' ? 'light' : 'dark';
+  document.documentElement.setAttribute('data-theme', t);
+  try {
+    localStorage.setItem(THEME_STORAGE_KEY, t);
+  } catch {
+    /* ignore */
+  }
+  const label = t === 'dark' ? 'Switch to light theme' : 'Switch to dark theme';
+  const title = t === 'dark' ? 'Light mode' : 'Dark mode';
+  for (const id of ['btnThemeToggle', 'btnWelcomeThemeToggle']) {
+    const btn = document.getElementById(id);
+    if (btn) {
+      btn.setAttribute('aria-label', label);
+      btn.title = title;
+    }
+  }
+}
+
+function initTheme() {
+  try {
+    const saved = localStorage.getItem(THEME_STORAGE_KEY);
+    if (saved === 'light' || saved === 'dark') applyTheme(saved);
+    else applyTheme('dark');
+  } catch {
+    applyTheme('dark');
+  }
+}
+
+function setMainAppHidden(hidden) {
+  const main = $('mainApp');
+  if (!main) return;
+  if (hidden) {
+    main.setAttribute('aria-hidden', 'true');
+    main.classList.add('main-app--behind-welcome');
+  } else {
+    main.removeAttribute('aria-hidden');
+    main.classList.remove('main-app--behind-welcome');
+  }
+}
+
+function initWelcome() {
+  const root = $('welcomeScreen');
+  if (!root) return;
+  root.classList.remove('welcome-screen--hidden');
+  root.setAttribute('aria-hidden', 'false');
+  setMainAppHidden(true);
+}
+
+function dismissWelcome() {
+  const root = $('welcomeScreen');
+  if (root) {
+    root.classList.add('welcome-screen--hidden');
+    root.setAttribute('aria-hidden', 'true');
+  }
+  setMainAppHidden(false);
+  closeWelcomeDemoModal();
+}
+
+function openWelcomeDemoModal() {
+  const m = $('welcomeDemoModal');
+  if (!m) return;
+  m.classList.remove('hidden');
+  m.setAttribute('aria-hidden', 'false');
+}
+
+function closeWelcomeDemoModal() {
+  const m = $('welcomeDemoModal');
+  if (!m) return;
+  m.classList.add('hidden');
+  m.setAttribute('aria-hidden', 'true');
+}
 
 let session = null;
 let mic = null;
@@ -186,21 +262,24 @@ function pickDesktopSourceThumbnails(sources) {
 
 async function acquireScreenVideoStream() {
   lastElectronCaptureId = null;
-  try {
-    return await createDisplayMediaStream();
-  } catch (err) {
-    console.warn('getDisplayMedia failed, trying Electron desktopCapturer', err);
-    if (typeof window.iris?.getDesktopSources !== 'function') {
-      throw err;
+  /* In Electron, prefer our in-app picker (themed UI + scrollbars). getDisplayMedia opens the
+   * OS/native screen dialog first, which cannot be styled with app CSS. */
+  const canUseElectronPicker = typeof window.iris?.getDesktopSources === 'function';
+  if (canUseElectronPicker) {
+    try {
+      const sources = await window.iris.getDesktopSources();
+      if (sources?.length) {
+        const id = await pickDesktopSourceThumbnails(sources);
+        lastElectronCaptureId = id;
+        return await createElectronDesktopStream(id);
+      }
+    } catch (err) {
+      if (err?.message === 'cancelled') throw err;
+      console.warn('Electron desktop picker failed, trying getDisplayMedia', err);
     }
-    const sources = await window.iris.getDesktopSources();
-    if (!sources?.length) {
-      throw err;
-    }
-    const id = await pickDesktopSourceThumbnails(sources);
-    lastElectronCaptureId = id;
-    return createElectronDesktopStream(id);
   }
+
+  return await createDisplayMediaStream();
 }
 
 async function startScreenShare() {
@@ -480,9 +559,36 @@ if (typeof window.iris?.onStopScreenShare === 'function') {
 els.btnStart.addEventListener('click', () => startSession());
 els.btnStop.addEventListener('click', () => stopAll());
 els.btnShareScreen.addEventListener('click', () => void startScreenShare());
+els.btnThemeToggle?.addEventListener('click', () => {
+  const cur = document.documentElement.getAttribute('data-theme') === 'light' ? 'light' : 'dark';
+  applyTheme(cur === 'dark' ? 'light' : 'dark');
+});
+
+$('btnWelcomeThemeToggle')?.addEventListener('click', () => {
+  const cur = document.documentElement.getAttribute('data-theme') === 'light' ? 'light' : 'dark';
+  applyTheme(cur === 'dark' ? 'light' : 'dark');
+});
+
+$('btnWelcomeGetStarted')?.addEventListener('click', () => dismissWelcome());
+$('btnWelcomeViewDemo')?.addEventListener('click', () => openWelcomeDemoModal());
+$('btnWelcomeDemoClose')?.addEventListener('click', () => closeWelcomeDemoModal());
+$('btnWelcomeDemoGetStarted')?.addEventListener('click', () => dismissWelcome());
+
+const welcomeDemoModal = $('welcomeDemoModal');
+welcomeDemoModal?.addEventListener('click', (ev) => {
+  if (ev.target === welcomeDemoModal) closeWelcomeDemoModal();
+});
+
+window.addEventListener('keydown', (ev) => {
+  if (ev.key !== 'Escape') return;
+  const m = $('welcomeDemoModal');
+  if (m && !m.classList.contains('hidden')) closeWelcomeDemoModal();
+});
 
 window.addEventListener('beforeunload', () => {
   stopAll();
 });
 
+initTheme();
+initWelcome();
 setStatus('idle', 'Disconnected');

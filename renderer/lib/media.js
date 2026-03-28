@@ -183,11 +183,11 @@ export class ScreenCapture {
       if (regions?.length) {
         const lw = Math.max(2, Math.round(cw / 400));
         ctx.save();
-        ctx.strokeStyle = 'rgba(255, 48, 48, 0.92)';
+        ctx.strokeStyle = 'rgba(210, 193, 182, 0.95)';
         ctx.lineWidth = lw;
         ctx.setLineDash([]);
         ctx.font = `600 ${Math.max(12, Math.round(cw / 70))}px system-ui, sans-serif`;
-        ctx.fillStyle = 'rgba(255, 48, 48, 0.95)';
+        ctx.fillStyle = 'rgba(210, 193, 182, 0.98)';
         regions.forEach((r) => {
           const x = r.nx * cw;
           const y = r.ny * ch;
