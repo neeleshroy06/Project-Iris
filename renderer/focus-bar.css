@@ -5,21 +5,37 @@
 html,
 body {
   margin: 0;
-  height: 100%;
+  padding: 0;
+  width: 100%;
+  min-height: 100%;
   overflow: hidden;
   background: transparent;
   font-family: 'Segoe UI', system-ui, sans-serif;
   -webkit-app-region: drag;
 }
 
-/* Matches main window dark mode base: #0f1e38 */
-.bar {
-  display: flex;
-  align-items: center;
-  gap: 10px;
-  height: 100%;
-  padding: 0 12px;
+.sr-only {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  padding: 0;
+  margin: -1px;
+  overflow: hidden;
+  clip: rect(0, 0, 0, 0);
+  white-space: nowrap;
+  border: 0;
+}
+
+.focus-root {
+  display: block;
+  width: 100%;
+  box-sizing: border-box;
+}
+
+/* Single card: bar + optional composer + docked links / downloads */
+.focus-card {
   border-radius: 12px;
+  overflow: hidden;
   border: 1px solid rgba(210, 193, 182, 0.22);
   background: linear-gradient(
     165deg,
@@ -37,14 +53,28 @@ body {
   -webkit-backdrop-filter: blur(10px);
 }
 
+.bar {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 8px;
+  row-gap: 6px;
+  min-height: 54px;
+  padding: 0 10px;
+  background: transparent;
+  border: none;
+  box-shadow: none;
+}
+
 .bar-actions {
   display: flex;
   align-items: center;
-  gap: 8px;
+  gap: 6px;
   margin-left: auto;
+  flex-shrink: 0;
 }
 
-/* Silent / Ambient — same tap target height as .btn (7px 11px, 11px type) */
+/* Silent / Ambient — same tap target height as .btn */
 .bar-observation {
   -webkit-app-region: no-drag;
   display: inline-flex;
@@ -74,7 +104,7 @@ body {
   justify-content: center;
   font-size: 11px;
   font-weight: 600;
-  padding: 7px 11px;
+  padding: 7px 9px;
   min-height: 100%;
   cursor: pointer;
   color: rgba(210, 193, 182, 0.75);
@@ -122,6 +152,21 @@ body {
 }
 
 .brand {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  flex-shrink: 0;
+}
+
+.brand-logo {
+  width: 22px;
+  height: 22px;
+  object-fit: contain;
+  display: block;
+  flex-shrink: 0;
+}
+
+.brand-text {
   font-weight: 700;
   font-size: 15px;
   letter-spacing: 0.04em;
@@ -155,7 +200,7 @@ body {
   font: inherit;
   font-size: 11px;
   font-weight: 600;
-  padding: 7px 11px;
+  padding: 7px 9px;
   border-radius: 8px;
   cursor: pointer;
   white-space: nowrap;
@@ -182,6 +227,17 @@ body {
     box-shadow 0.15s ease,
     background-color 0.15s ease,
     border-color 0.15s ease;
+}
+
+.btn-type {
+  padding: 7px 10px;
+  border-color: rgba(120, 180, 220, 0.35);
+  color: #d4e8f8;
+}
+
+.btn-type:hover {
+  background-color: rgba(45, 90, 120, 0.55);
+  border-color: rgba(150, 200, 235, 0.45);
 }
 
 .btn:hover {
@@ -233,4 +289,118 @@ body {
 .btn-danger:hover {
   background-color: rgba(175, 80, 90, 0.4);
   border-color: rgba(240, 160, 168, 0.55);
+}
+
+.focus-composer-wrap {
+  -webkit-app-region: no-drag;
+  padding: 0 10px 10px;
+  border-top: 1px solid rgba(0, 0, 0, 0.28);
+}
+
+.focus-composer-wrap.is-hidden {
+  display: none;
+}
+
+.focus-composer-input {
+  width: 100%;
+  margin: 0;
+  padding: 8px 10px;
+  border-radius: 8px;
+  border: 1px solid rgba(210, 193, 182, 0.28);
+  background: rgba(8, 16, 32, 0.55);
+  color: #ede8e4;
+  font-size: 12px;
+  outline: none;
+  box-shadow: inset 0 1px 3px rgba(0, 0, 0, 0.35);
+}
+
+.focus-composer-input::placeholder {
+  color: rgba(210, 193, 182, 0.45);
+}
+
+.focus-composer-input:focus {
+  border-color: rgba(120, 180, 220, 0.55);
+  box-shadow:
+    inset 0 1px 3px rgba(0, 0, 0, 0.35),
+    0 0 0 1px rgba(80, 140, 190, 0.35);
+}
+
+.focus-interactions {
+  -webkit-app-region: no-drag;
+  max-height: 220px;
+  overflow-x: hidden;
+  overflow-y: auto;
+  border-top: 1px solid rgba(0, 0, 0, 0.28);
+}
+
+.focus-interactions[hidden] {
+  display: none !important;
+}
+
+.focus-dock-item {
+  padding: 8px 10px 10px;
+  border-bottom: 1px solid rgba(255, 255, 255, 0.06);
+  position: relative;
+}
+
+.focus-dock-item:last-child {
+  border-bottom: none;
+}
+
+.focus-dock-item__title {
+  font-size: 11px;
+  font-weight: 600;
+  color: rgba(210, 193, 182, 0.88);
+  line-height: 1.35;
+  padding-right: 22px;
+  margin-bottom: 6px;
+  word-break: break-word;
+}
+
+.focus-dock-item__actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  align-items: center;
+}
+
+.focus-dock-item__actions a,
+.focus-dock-item__actions button.linkish {
+  -webkit-app-region: no-drag;
+  font: inherit;
+  font-size: 11px;
+  font-weight: 600;
+  cursor: pointer;
+  color: #8ec8f0;
+  text-decoration: underline;
+  text-underline-offset: 2px;
+  background: none;
+  border: none;
+  padding: 0;
+}
+
+.focus-dock-item__actions a:hover,
+.focus-dock-item__actions button.linkish:hover {
+  color: #b8dcf8;
+}
+
+.focus-dock-dismiss {
+  -webkit-app-region: no-drag;
+  position: absolute;
+  top: 4px;
+  right: 6px;
+  width: 22px;
+  height: 22px;
+  border: none;
+  border-radius: 6px;
+  cursor: pointer;
+  font-size: 16px;
+  line-height: 1;
+  color: rgba(210, 193, 182, 0.55);
+  background: rgba(0, 0, 0, 0.2);
+}
+
+.focus-dock-dismiss:hover {
+  color: #ede8e4;
+  background: rgba(0, 0, 0, 0.35);
 }

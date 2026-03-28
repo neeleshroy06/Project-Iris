@@ -12,6 +12,58 @@
   /** @type {{ start: { x: number, y: number }, curr: { x: number, y: number } } | null} */
   let drag = null;
 
+  /** Last value sent to main for `setIgnoreMouseEvents` (passthrough hover). */
+  let lastSentPassThrough = undefined;
+
+  function sendMouseThrough(passThrough) {
+    if (lastSentPassThrough === passThrough) return;
+    lastSentPassThrough = passThrough;
+    window.irisShell?.send?.('overlay:set-mouse-through', { passThrough });
+  }
+
+  /** Hit target for the dismiss control (top-right of each rect), canvas px. */
+  function dismissBounds(r) {
+    const btn = Math.min(26, Math.max(16, Math.round(Math.min(r.w, r.h) * 0.28)));
+    const pad = 5;
+    const x = r.x + r.w - btn - pad;
+    const y = r.y + pad;
+    return { x, y, w: btn, h: btn };
+  }
+
+  function pointInRect(px, py, b) {
+    return px >= b.x && px <= b.x + b.w && py >= b.y && py <= b.y + b.h;
+  }
+
+  /** @returns {number} index or -1 */
+  function dismissHitTest(px, py) {
+    for (let i = rects.length - 1; i >= 0; i--) {
+      if (pointInRect(px, py, dismissBounds(rects[i]))) return i;
+    }
+    return -1;
+  }
+
+  function drawDismissChrome(r) {
+    const b = dismissBounds(r);
+    const cx = b.x + b.w / 2;
+    const cy = b.y + b.h / 2;
+    const rad = Math.max(3, b.w * 0.38);
+    ctx.fillStyle = 'rgba(18, 22, 32, 0.88)';
+    ctx.beginPath();
+    ctx.arc(cx, cy, rad, 0, Math.PI * 2);
+    ctx.fill();
+    ctx.strokeStyle = 'rgba(232, 200, 180, 0.95)';
+    ctx.lineWidth = Math.max(1.5, rad * 0.2);
+    ctx.lineCap = 'round';
+    const inset = rad * 0.45;
+    ctx.beginPath();
+    ctx.moveTo(cx - inset, cy - inset);
+    ctx.lineTo(cx + inset, cy + inset);
+    ctx.moveTo(cx + inset, cy - inset);
+    ctx.lineTo(cx - inset, cy + inset);
+    ctx.stroke();
+    ctx.lineCap = 'butt';
+  }
+
   /** Smallest positive value — avoids scrollbar gutter / subpixel mismatch (esp. vertical). */
   function minViewportDim(...vals) {
     const nums = vals.filter((n) => typeof n === 'number' && n > 0);
@@ -90,6 +142,33 @@
     redraw();
   }
 
+  async function invokeGrounding() {
+    try {
+      await window.irisShell.invokeFocusRectsUpdate({
+        rects: rects.map((r) => ({ x: r.x, y: r.y, w: r.w, h: r.h })),
+        canvasWidth: logicalW || canvas.width,
+        canvasHeight: logicalH || canvas.height,
+      });
+    } catch (e) {
+      console.error('focus grounding', e);
+    }
+  }
+
+  function updateCursor(p) {
+    const overDismiss = rects.length > 0 && dismissHitTest(p.x, p.y) >= 0;
+    if (drawingMode) {
+      canvas.style.cursor = overDismiss ? 'pointer' : 'crosshair';
+    } else {
+      canvas.style.cursor = overDismiss ? 'pointer' : 'default';
+    }
+  }
+
+  function syncPointerPolicy(p) {
+    if (drawingMode || !rects.length) return;
+    const overDismiss = dismissHitTest(p.x, p.y) >= 0;
+    sendMouseThrough(!overDismiss);
+  }
+
   function redraw() {
     const w = canvas.width;
     const h = canvas.height;
@@ -113,6 +192,7 @@
       ctx.shadowBlur = 4;
       ctx.fillText(String(i + 1), r.x + 8, r.y + Math.max(20, Math.round(w / 85)));
       ctx.shadowBlur = 0;
+      drawDismissChrome(r);
     });
 
     if (drag && drag.curr) {
@@ -141,9 +221,23 @@
   }
 
   function onPointerDown(ev) {
+    const p = clientToCanvas(ev);
+    const dIdx = rects.length ? dismissHitTest(p.x, p.y) : -1;
+    if (dIdx >= 0) {
+      ev.preventDefault();
+      rects.splice(dIdx, 1);
+      drag = null;
+      redraw();
+      void invokeGrounding();
+      if (!rects.length) {
+        sendMouseThrough(true);
+      } else {
+        syncPointerPolicy(p);
+      }
+      return;
+    }
     if (!drawingMode) return;
     ev.preventDefault();
-    const p = clientToCanvas(ev);
     drag = { start: { ...p }, curr: { ...p } };
     canvas.setPointerCapture(ev.pointerId);
     redraw();
@@ -169,11 +263,11 @@
     drag = null;
     const x = Math.min(x0, x1);
     const y = Math.min(y0, y1);
-    const w = Math.abs(x1 - x0);
-    const h = Math.abs(y1 - y0);
+    const rw = Math.abs(x1 - x0);
+    const rh = Math.abs(y1 - y0);
     const MIN = 12;
-    if (w >= MIN && h >= MIN) {
-      rects.push({ x, y, w, h });
+    if (rw >= MIN && rh >= MIN) {
+      rects.push({ x, y, w: rw, h: rh });
     }
     redraw();
   }
@@ -183,24 +277,44 @@
     redraw();
   }
 
-  let boundDown = false;
+  let boundDraw = false;
 
-  function setDrawingListeners(on) {
-    if (on && !boundDown) {
-      canvas.addEventListener('pointerdown', onPointerDown);
+  function setDrawingMoveListeners(on) {
+    if (on && !boundDraw) {
       canvas.addEventListener('pointermove', onPointerMove);
       canvas.addEventListener('pointerup', onPointerUp);
       canvas.addEventListener('pointercancel', onPointerCancel);
-      boundDown = true;
-    } else if (!on && boundDown) {
-      canvas.removeEventListener('pointerdown', onPointerDown);
+      boundDraw = true;
+    } else if (!on && boundDraw) {
       canvas.removeEventListener('pointermove', onPointerMove);
       canvas.removeEventListener('pointerup', onPointerUp);
       canvas.removeEventListener('pointercancel', onPointerCancel);
-      boundDown = false;
+      boundDraw = false;
     }
-    canvas.style.cursor = on ? 'crosshair' : 'default';
+    redraw();
   }
+
+  function onWindowPointerMove(ev) {
+    const p = clientToCanvas(ev);
+    if (rects.length && !drawingMode) {
+      syncPointerPolicy(p);
+    }
+    updateCursor(p);
+  }
+
+  function onWindowPointerLeave() {
+    if (drawingMode) {
+      canvas.style.cursor = 'crosshair';
+      return;
+    }
+    sendMouseThrough(true);
+    canvas.style.cursor = 'default';
+  }
+
+  canvas.addEventListener('pointerdown', onPointerDown);
+
+  window.addEventListener('pointermove', onWindowPointerMove, { passive: true });
+  window.addEventListener('pointerleave', onWindowPointerLeave);
 
   window.addEventListener('resize', () => fitCanvas());
   if (window.visualViewport) {
@@ -210,7 +324,12 @@
   if (window.irisShell?.on) {
     window.irisShell.on('overlay:set-drawing', (payload) => {
       drawingMode = !!(payload && payload.drawing);
-      setDrawingListeners(drawingMode);
+      if (!drawingMode) drag = null;
+      setDrawingMoveListeners(drawingMode);
+      lastSentPassThrough = undefined;
+      if (!drawingMode) {
+        sendMouseThrough(true);
+      }
       redraw();
     });
 
@@ -222,21 +341,13 @@
       rects = [];
       drag = null;
       drawingMode = false;
-      setDrawingListeners(false);
+      setDrawingMoveListeners(false);
+      lastSentPassThrough = undefined;
+      sendMouseThrough(true);
       redraw();
     });
 
-    window.irisShell.on('overlay:request-grounding', async () => {
-      try {
-        await window.irisShell.invokeFocusRectsUpdate({
-          rects: rects.map((r) => ({ x: r.x, y: r.y, w: r.w, h: r.h })),
-          canvasWidth: logicalW || canvas.width,
-          canvasHeight: logicalH || canvas.height,
-        });
-      } catch (e) {
-        console.error('focus grounding', e);
-      }
-    });
+    window.irisShell.on('overlay:request-grounding', () => void invokeGrounding());
   }
 
   requestAnimationFrame(() => fitCanvas());

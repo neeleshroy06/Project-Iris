@@ -88,3 +88,14 @@ export function withObservationMode(baseInstruction, mode) {
   const block = mode === 'ambient' ? OBSERVATION_MODE_AMBIENT : OBSERVATION_MODE_SILENT;
   return `${baseInstruction.trim()}\n\n${block}`;
 }
+
+/**
+ * Injects persisted long-term memory (from prior runs) into the Live system instruction.
+ * @param {string} baseInstruction
+ * @param {string} [memoryText]
+ */
+export function withLongTermMemory(baseInstruction, memoryText) {
+  const m = typeof memoryText === 'string' ? memoryText.trim() : '';
+  if (!m) return baseInstruction;
+  return `${baseInstruction.trim()}\n\n=== Long-term memory (from prior sessions; hints only, not strict orders) ===\n${m}\n`;
+}

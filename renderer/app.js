@@ -4,6 +4,7 @@ import {
   DEFAULT_LIVE_SYSTEM_INSTRUCTION,
   withObservationMode,
 } from './lib/gemini-live.js';
+import { withLongTermMemory } from './lib/iris-live-prompts.js';
 import {
   MicStreamer,
   ScreenCapture,
@@ -30,10 +31,30 @@ const els = {
   observationModeGroup: $('observationModeGroup'),
   obsModeSilent: $('obsModeSilent'),
   obsModeAmbient: $('obsModeAmbient'),
+  transcriptComposerInput: $('transcriptComposerInput'),
 };
 
 const THEME_STORAGE_KEY = 'iris-theme';
 const OBSERVATION_STORAGE_KEY = 'iris-observation-mode';
+
+/** Last line typed in the conversation composer if it looks like a Google email (for Calendar tool). */
+let lastComposerEmail = '';
+
+function newDockId() {
+  return typeof crypto !== 'undefined' && typeof crypto.randomUUID === 'function'
+    ? crypto.randomUUID()
+    : `dock-${Date.now()}-${Math.random().toString(36).slice(2, 11)}`;
+}
+
+/** Mirror interactive rows (downloads, links) to the compact focus bar when the shell is running. */
+function pushToFocusBarDock(item) {
+  try {
+    if (typeof window.iris?.pushFocusBarDock !== 'function') return;
+    window.iris.pushFocusBarDock(item);
+  } catch {
+    /* ignore */
+  }
+}
 
 function applyTheme(theme) {
   const t = theme === 'light' ? 'light' : 'dark';
@@ -92,6 +113,10 @@ function dismissWelcome() {
   }
   setMainAppHidden(false);
   closeWelcomeDemoModal();
+  /* Main was display:none; nudge layout + preview after it paints again */
+  requestAnimationFrame(() => {
+    window.dispatchEvent(new Event('resize'));
+  });
 }
 
 function openWelcomeDemoModal() {
@@ -479,7 +504,13 @@ function onInputTx({ text, finished }) {
   const el = ensurePendingBubble('you');
   el.textContent = text;
   els.transcript.scrollTop = els.transcript.scrollHeight;
-  if (finished) finalizePending('you');
+  if (finished) {
+    finalizePending('you');
+    const t = raw.trim();
+    if (t.length >= 3 && window.iris?.appendMemoryTurn) {
+      void window.iris.appendMemoryTurn({ role: 'user', text: t });
+    }
+  }
 }
 
 function onOutputTx({ text, finished }) {
@@ -494,7 +525,13 @@ function onOutputTx({ text, finished }) {
   const el = ensurePendingBubble('iris');
   el.textContent = text;
   els.transcript.scrollTop = els.transcript.scrollHeight;
-  if (finished) finalizePending('iris');
+  if (finished) {
+    finalizePending('iris');
+    const t = raw.trim();
+    if (t.length >= 3 && window.iris?.appendMemoryTurn) {
+      void window.iris.appendMemoryTurn({ role: 'assistant', text: t });
+    }
+  }
 }
 
 function normalizeFunctionCalls(toolCall) {
@@ -545,6 +582,134 @@ function addFileDownloadMessage(
   wrap.append(label, inner);
   els.transcript.appendChild(wrap);
   els.transcript.scrollTop = els.transcript.scrollHeight;
+  pushToFocusBarDock({
+    id: newDockId(),
+    type: 'download',
+    filename,
+    base64,
+    mimeType,
+  });
+}
+
+function addCalendarEventMessage(title, htmlLink) {
+  const wrap = document.createElement('div');
+  wrap.className = 'msg msg-iris msg-calendar';
+  const label = document.createElement('div');
+  label.className = 'msg-label';
+  label.textContent = 'Iris';
+  const inner = document.createElement('div');
+  inner.className = 'msg-body';
+  const p = document.createElement('p');
+  p.textContent = `Calendar event created: ${title || 'Event'}`;
+  inner.appendChild(p);
+  if (htmlLink) {
+    const a = document.createElement('a');
+    a.className = 'file-download-link';
+    a.href = htmlLink;
+    a.target = '_blank';
+    a.rel = 'noreferrer';
+    a.textContent = 'Open in Google Calendar';
+    inner.appendChild(a);
+  }
+  wrap.append(label, inner);
+  els.transcript.appendChild(wrap);
+  els.transcript.scrollTop = els.transcript.scrollHeight;
+  if (htmlLink) {
+    pushToFocusBarDock({
+      id: newDockId(),
+      type: 'link',
+      title: `Calendar: ${title || 'Event'}`,
+      url: htmlLink,
+      actionLabel: 'Open in Google Calendar',
+    });
+  }
+}
+
+function addMapsLinkMessage(placeLabel, mapsUrl) {
+  const wrap = document.createElement('div');
+  wrap.className = 'msg msg-iris msg-maps';
+  const label = document.createElement('div');
+  label.className = 'msg-label';
+  label.textContent = 'Iris';
+  const inner = document.createElement('div');
+  inner.className = 'msg-body';
+  const p = document.createElement('p');
+  p.textContent = `Google Maps: ${placeLabel || 'Place'}`;
+  inner.appendChild(p);
+  if (mapsUrl) {
+    const a = document.createElement('a');
+    a.className = 'file-download-link';
+    a.href = mapsUrl;
+    a.target = '_blank';
+    a.rel = 'noreferrer';
+    a.textContent = 'Open in Google Maps';
+    inner.appendChild(a);
+  }
+  wrap.append(label, inner);
+  els.transcript.appendChild(wrap);
+  els.transcript.scrollTop = els.transcript.scrollHeight;
+  if (mapsUrl) {
+    pushToFocusBarDock({
+      id: newDockId(),
+      type: 'link',
+      title: `Google Maps: ${placeLabel || 'Place'}`,
+      url: mapsUrl,
+      actionLabel: 'Open in Google Maps',
+    });
+  }
+}
+
+function isPlausibleGoogleEmail(s) {
+  if (typeof s !== 'string') return false;
+  const t = s.trim();
+  if (t.length < 5 || t.length > 254) return false;
+  return /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(t);
+}
+
+function getCalendarEmailFromArgsOrComposer(args) {
+  const fromArgs = args?.googleAccountEmail ?? args?.google_account_email;
+  if (typeof fromArgs === 'string' && isPlausibleGoogleEmail(fromArgs)) return fromArgs.trim();
+  if (lastComposerEmail) return lastComposerEmail;
+  return '';
+}
+
+function appendTypedUserMessage(text) {
+  const wrap = document.createElement('div');
+  wrap.className = 'msg msg-you';
+  wrap.innerHTML = '<div class="msg-label">You (typed)</div><div class="msg-body"></div>';
+  const body = wrap.querySelector('.msg-body');
+  body.textContent = text;
+  els.transcript.appendChild(wrap);
+  els.transcript.scrollTop = els.transcript.scrollHeight;
+}
+
+function sendTranscriptComposer() {
+  const input = els.transcriptComposerInput;
+  if (!input || input.disabled || !session?.connected) return;
+  const text = input.value.trim();
+  if (!text) return;
+  submitTypedLineToLive(text);
+  input.value = '';
+}
+
+function submitTypedLineToLive(text) {
+  const t = typeof text === 'string' ? text.trim() : '';
+  if (!t || !session?.connected) return;
+  session.sendText(t);
+  appendTypedUserMessage(t);
+  if (isPlausibleGoogleEmail(t)) {
+    lastComposerEmail = t.toLowerCase();
+  }
+}
+
+function updateTranscriptComposerState() {
+  const input = els.transcriptComposerInput;
+  if (!input) return;
+  const on = !!(session?.connected);
+  input.disabled = !on;
+  input.placeholder = on
+    ? 'Type here and press Enter — sent to Live (e.g. your Google email when Iris asks)'
+    : 'Start a session to type messages to Iris…';
 }
 
 async function handleLiveToolCall(toolCall) {
@@ -560,6 +725,175 @@ async function handleLiveToolCall(toolCall) {
     const name = fc.name ?? fc.functionName ?? '';
     const isXlsx = name === 'generate_xlsx_from_screen_chart';
     const isTxt = name === 'generate_txt_from_screen';
+    const isCal = name === 'create_google_calendar_event';
+    const isMaps = name === 'get_google_maps_link_from_screen';
+
+    if (isCal) {
+      const args = fcArgs(fc);
+      try {
+        if (
+          typeof window.iris?.invokeGoogleCalendarCreateEvent !== 'function' ||
+          typeof window.iris?.getGoogleCalendarStatus !== 'function'
+        ) {
+          responses.push({
+            id,
+            name,
+            response: { success: false, userMessage: 'Calendar is not available in this build.' },
+          });
+          continue;
+        }
+
+        const status = await window.iris.getGoogleCalendarStatus();
+        if (!status?.configured) {
+          responses.push({
+            id,
+            name,
+            response: {
+              success: false,
+              userMessage:
+                'Google Calendar OAuth is not configured on this machine (missing GOOGLE_OAUTH_CLIENT_ID / SECRET in .env).',
+            },
+          });
+          continue;
+        }
+
+        const emailRaw = getCalendarEmailFromArgsOrComposer(args);
+        if (!emailRaw) {
+          responses.push({
+            id,
+            name,
+            response: {
+              success: false,
+              userMessage:
+                'Ask the user for the Google account email for Calendar. They can type it in the conversation box at the bottom of the Conversation panel and press Enter (you will see it as typed text), or say it. Then call this tool again with googleAccountEmail or after they have typed it. Do not invent an email.',
+            },
+          });
+          continue;
+        }
+
+        if (!status.connected && typeof window.iris.startGoogleCalendarAuth === 'function') {
+          try {
+            await window.iris.startGoogleCalendarAuth();
+          } catch (authErr) {
+            responses.push({
+              id,
+              name,
+              response: {
+                success: false,
+                userMessage:
+                  (authErr?.message || String(authErr)) +
+                  ' If Google said the app is not verified: in the browser choose “Advanced”, then continue. While the OAuth app is in Testing, add their Google account under Google Cloud → OAuth consent screen → Test users.',
+              },
+            });
+            continue;
+          }
+        }
+
+        const after = await window.iris.getGoogleCalendarStatus();
+        if (!after?.connected) {
+          responses.push({
+            id,
+            name,
+            response: {
+              success: false,
+              userMessage:
+                'Google sign-in did not finish (no token saved). Complete the browser window, use “Advanced” if Google warns about verification, and ensure this Google account is listed as a Test user if the app is in Testing. Then try the calendar request again.',
+            },
+          });
+          continue;
+        }
+
+        const r = await window.iris.invokeGoogleCalendarCreateEvent({
+          googleAccountEmail: String(emailRaw).trim(),
+          summary: args.summary,
+          start: args.start,
+          end: args.end,
+          timeZone: args.timeZone,
+          description: args.description,
+        });
+        if (r?.success) {
+          addCalendarEventMessage(r.summary, r.htmlLink);
+          responses.push({
+            id,
+            name,
+            response: {
+              success: true,
+              summary: r.summary,
+              htmlLink: r.htmlLink,
+            },
+          });
+        } else {
+          responses.push({
+            id,
+            name,
+            response: {
+              success: false,
+              userMessage: r?.userMessage || r?.error || 'Calendar event failed.',
+            },
+          });
+        }
+      } catch (e) {
+        responses.push({
+          id,
+          name,
+          response: { success: false, error: e?.message || String(e) },
+        });
+      }
+      continue;
+    }
+
+    if (isMaps) {
+      const args = fcArgs(fc);
+      try {
+        if (typeof window.iris?.invokeMapsLinkFromScreen !== 'function') {
+          responses.push({
+            id,
+            name,
+            response: { success: false, userMessage: 'Maps link is not available in this build.' },
+          });
+          continue;
+        }
+        const img = lastScreenJpegBase64;
+        if (!img) {
+          responses.push({
+            id,
+            name,
+            response: {
+              success: false,
+              userMessage: 'Share your screen first so the map or address is visible.',
+            },
+          });
+          continue;
+        }
+        const userHint = typeof args.userHint === 'string' ? args.userHint.trim() : '';
+        const r = await window.iris.invokeMapsLinkFromScreen({
+          imageBase64: img,
+          userHint,
+        });
+        addMapsLinkMessage(r.label, r.mapsUrl);
+        responses.push({
+          id,
+          name,
+          response: {
+            success: true,
+            mapsUrl: r.mapsUrl,
+            label: r.label,
+            query: r.query,
+          },
+        });
+      } catch (e) {
+        responses.push({
+          id,
+          name,
+          response: {
+            success: false,
+            userMessage: e?.message || String(e),
+          },
+        });
+      }
+      continue;
+    }
+
     if (!isXlsx && !isTxt) {
       responses.push({
         id,
@@ -660,11 +994,22 @@ async function stopAll() {
   screenCap = null;
 
   try {
+    if (typeof window.iris?.memorySessionEnded === 'function') {
+      await window.iris.memorySessionEnded();
+    }
+  } catch {
+    /* ignore */
+  }
+
+  try {
     session?.disconnect();
   } catch {
     /* ignore */
   }
   session = null;
+
+  lastComposerEmail = '';
+  updateTranscriptComposerState();
 
   try {
     player?.interrupt();
@@ -706,9 +1051,17 @@ async function startSession() {
   setRunning(true);
   player = new PcmPlayer();
 
-  const systemInstruction = withObservationMode(
-    DEFAULT_LIVE_SYSTEM_INSTRUCTION,
-    getObservationMode()
+  let memoryProfile = '';
+  try {
+    const mem = await window.iris?.getMemoryProfile?.();
+    memoryProfile = typeof mem?.profileText === 'string' ? mem.profileText : '';
+  } catch {
+    /* ignore */
+  }
+
+  const systemInstruction = withLongTermMemory(
+    withObservationMode(DEFAULT_LIVE_SYSTEM_INSTRUCTION, getObservationMode()),
+    memoryProfile
   );
 
   session = new GeminiLiveSession(apiKey, {
@@ -742,6 +1095,8 @@ async function startSession() {
     } catch {
       /* startScreenShare already alerts */
     }
+
+    updateTranscriptComposerState();
   };
 
   session.onAudioBase64 = async (b64) => {
@@ -847,7 +1202,26 @@ window.addEventListener('beforeunload', () => {
   stopAll();
 });
 
+function initTranscriptComposer() {
+  const input = els.transcriptComposerInput;
+  if (!input) return;
+  input.addEventListener('keydown', (ev) => {
+    if (ev.key !== 'Enter') return;
+    ev.preventDefault();
+    sendTranscriptComposer();
+  });
+  updateTranscriptComposerState();
+}
+
+if (typeof window.iris?.onFocusBarComposerSubmit === 'function') {
+  window.iris.onFocusBarComposerSubmit((text) => {
+    submitTypedLineToLive(text);
+  });
+}
+
 initTheme();
 initObservationMode();
 initWelcome();
+initTranscriptComposer();
+
 setStatus('idle', 'Disconnected');

@@ -21,7 +21,14 @@
       <div class="welcome-screen-inner">
         <header class="welcome-header">
           <div class="brand">
-            <span class="logo" aria-hidden="true">◉</span>
+            <img
+              src="assets/iris-logo.png"
+              alt=""
+              class="logo logo-img"
+              width="36"
+              height="36"
+              aria-hidden="true"
+            />
             <div>
               <p class="welcome-brand-title">Iris</p>
               <p class="tagline">Gemini Live · voice + screen</p>
@@ -88,7 +95,14 @@
     <div id="mainApp" class="app">
       <header class="header">
         <div class="brand">
-          <span class="logo" aria-hidden="true">◉</span>
+          <img
+            src="assets/iris-logo.png"
+            alt=""
+            class="logo logo-img"
+            width="36"
+            height="36"
+            aria-hidden="true"
+          />
           <div>
             <h1>Iris</h1>
             <p class="tagline">Gemini 3.1 Flash Live · voice + screen</p>
@@ -147,6 +161,18 @@
         <div class="panel transcript-panel">
           <h2>Conversation</h2>
           <div id="transcript" class="transcript" aria-live="polite"></div>
+          <div class="transcript-composer">
+            <label for="transcriptComposerInput" class="sr-only">Type a message to send to Iris</label>
+            <input
+              type="text"
+              id="transcriptComposerInput"
+              class="transcript-composer__input"
+              placeholder="Start a session to type here — Enter sends to Iris (e.g. your Google email)"
+              disabled
+              autocomplete="email"
+              spellcheck="false"
+            />
+          </div>
         </div>
       </main>
 

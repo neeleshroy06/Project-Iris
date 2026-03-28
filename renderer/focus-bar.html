@@ -2,28 +2,51 @@
 <html lang="en">
   <head>
     <meta charset="UTF-8" />
-    <meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self'; style-src 'self'" />
+    <meta
+      http-equiv="Content-Security-Policy"
+      content="default-src 'self' blob:; script-src 'self'; style-src 'self'; img-src 'self' data:;"
+    />
     <title>Iris</title>
     <link rel="stylesheet" href="focus-bar.css" />
   </head>
   <body>
-    <div class="bar">
-      <span class="brand">Iris</span>
-      <span class="pulse" aria-hidden="true" title="Session active"></span>
-      <div class="bar-actions">
-        <button type="button" id="btnFocusMode" class="btn">Add focus</button>
-        <div
-          class="bar-observation"
-          role="group"
-          aria-label="Screen observation"
-          title="Silent: only speaks when you talk to Iris. Ambient: brief notes on big screen changes. If you change while live, stop and start the session for it to apply."
-        >
-          <input type="radio" name="observationModeBar" id="obsModeSilentBar" value="silent" checked />
-          <label for="obsModeSilentBar">Silent</label>
-          <input type="radio" name="observationModeBar" id="obsModeAmbientBar" value="ambient" />
-          <label for="obsModeAmbientBar">Ambient</label>
+    <div id="focusRoot" class="focus-root">
+      <div class="focus-card">
+        <div class="bar">
+          <div class="brand">
+            <img src="assets/iris-logo.png" alt="" class="brand-logo" width="22" height="22" aria-hidden="true" />
+            <span class="brand-text">Iris</span>
+          </div>
+          <span class="pulse" aria-hidden="true" title="Session active"></span>
+          <div class="bar-actions">
+            <button type="button" id="btnFocusComposer" class="btn btn-type" title="Type to Iris">Type</button>
+            <button type="button" id="btnFocusMode" class="btn">Add focus</button>
+            <div
+              class="bar-observation"
+              role="group"
+              aria-label="Screen observation"
+              title="Silent: only speaks when you talk to Iris. Ambient: brief notes on big screen changes. If you change while live, stop and start the session for it to apply."
+            >
+              <input type="radio" name="observationModeBar" id="obsModeSilentBar" value="silent" checked />
+              <label for="obsModeSilentBar">Silent</label>
+              <input type="radio" name="observationModeBar" id="obsModeAmbientBar" value="ambient" />
+              <label for="obsModeAmbientBar">Ambient</label>
+            </div>
+            <button type="button" id="btnStopShare" class="btn btn-danger">Stop share</button>
+          </div>
         </div>
-        <button type="button" id="btnStopShare" class="btn btn-danger">Stop share</button>
+        <div id="focusComposerWrap" class="focus-composer-wrap is-hidden" aria-hidden="true">
+          <label for="focusComposerInput" class="sr-only">Type a message to send to Iris</label>
+          <input
+            type="text"
+            id="focusComposerInput"
+            class="focus-composer-input"
+            placeholder="Type and press Enter — e.g. your Google email when asked"
+            autocomplete="off"
+            spellcheck="false"
+          />
+        </div>
+        <div id="focusInteractions" class="focus-interactions" hidden></div>
       </div>
     </div>
     <script src="focus-bar.js"></script>

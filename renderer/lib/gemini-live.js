@@ -15,6 +15,8 @@ import {
 import {
   SPREADSHEET_FUNCTION_DECLARATION,
   TEXT_FILE_FUNCTION_DECLARATION,
+  CALENDAR_FUNCTION_DECLARATION,
+  MAPS_LINK_FUNCTION_DECLARATION,
   IRIS_FILE_EXPORT_TOOL_INSTRUCTION,
 } from './iris-tools.js';
 
@@ -168,7 +170,14 @@ export class GeminiLiveSession {
 
     if (this._enableScreenFileTools) {
       setup.tools = [
-        { functionDeclarations: [SPREADSHEET_FUNCTION_DECLARATION, TEXT_FILE_FUNCTION_DECLARATION] },
+        {
+          functionDeclarations: [
+            SPREADSHEET_FUNCTION_DECLARATION,
+            TEXT_FILE_FUNCTION_DECLARATION,
+            CALENDAR_FUNCTION_DECLARATION,
+            MAPS_LINK_FUNCTION_DECLARATION,
+          ],
+        },
       ];
     }
 

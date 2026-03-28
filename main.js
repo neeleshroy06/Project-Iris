@@ -18,10 +18,21 @@ const {
   extractTextFileJson,
   buildTxtBuffer,
 } = require('./xlsx-from-chart');
+const { extractMapsLinkJson } = require('./maps-from-screen');
+
+const memoryStore = require('./memory-store');
+const googleCalendar = require('./google-calendar');
 
 let mainWindow = null;
 let focusBarWindow = null;
 let overlayWindow = null;
+
+/** Last requested focus-bar window size (content drives this via `focus-bar:resize`). */
+let focusBarContentSize = { width: 580, height: 54 };
+
+/** Mirrors interactive rows (links, downloads) for the focus bar; replayed when the bar is shown. */
+const FOCUS_BAR_DOCK_MAX = 14;
+let focusBarDockItems = [];
 let sessionLive = false;
 let overlayDrawingMode = false;
 
@@ -371,8 +382,8 @@ function positionFocusBar() {
   if (!focusBarWindow || focusBarWindow.isDestroyed()) return;
   const primary = screen.getPrimaryDisplay();
   const b = primary.workArea;
-  const barW = 580;
-  const barH = 54;
+  const barW = focusBarContentSize.width;
+  const barH = focusBarContentSize.height;
   focusBarWindow.setBounds({
     x: Math.round(b.x + b.width - barW - 12),
     y: Math.round(b.y + 12),
@@ -381,11 +392,56 @@ function positionFocusBar() {
   });
 }
 
+function clearFocusBarDockState() {
+  focusBarDockItems = [];
+  if (focusBarWindow && !focusBarWindow.isDestroyed()) {
+    try {
+      focusBarWindow.webContents.send('iris:focus-bar-dock-clear');
+    } catch {
+      /* ignore */
+    }
+  }
+}
+
+function pushFocusBarDockItem(item) {
+  if (!item || typeof item !== 'object') return;
+  const id =
+    typeof item.id === 'string' && item.id.trim()
+      ? item.id.trim()
+      : `dock-${Date.now()}-${Math.random().toString(36).slice(2, 9)}`;
+  const next = { ...item, id };
+  focusBarDockItems.push(next);
+  if (focusBarDockItems.length > FOCUS_BAR_DOCK_MAX) {
+    focusBarDockItems = focusBarDockItems.slice(-FOCUS_BAR_DOCK_MAX);
+  }
+  if (focusBarWindow && !focusBarWindow.isDestroyed()) {
+    try {
+      focusBarWindow.webContents.send('iris:focus-bar-dock-push', next);
+    } catch {
+      /* ignore */
+    }
+  }
+}
+
+function syncFocusBarDockToWindow() {
+  if (!focusBarWindow || focusBarWindow.isDestroyed()) return;
+  const wc = focusBarWindow.webContents;
+  const send = () => {
+    try {
+      wc.send('iris:focus-bar-dock-sync', focusBarDockItems);
+    } catch {
+      /* ignore */
+    }
+  };
+  if (wc.isLoading()) wc.once('did-finish-load', send);
+  else send();
+}
+
 function ensureFocusBarWindow() {
   if (focusBarWindow && !focusBarWindow.isDestroyed()) return focusBarWindow;
   focusBarWindow = new BrowserWindow({
-    width: 580,
-    height: 54,
+    width: focusBarContentSize.width,
+    height: focusBarContentSize.height,
     show: false,
     frame: false,
     transparent: true,
@@ -511,6 +567,7 @@ function showFocusBar() {
   } catch {
     /* ignore */
   }
+  syncFocusBarDockToWindow();
 }
 
 function hideFocusBar() {
@@ -527,6 +584,7 @@ function hideFocusBarForMainWindowActivation() {
 
 /** Keep the compact bar above the full-screen overlay (focus bar uses a higher always-on-top level). */
 function raiseFocusBarAboveOverlay() {
+  if (!sessionLive) return;
   if (!focusBarWindow || focusBarWindow.isDestroyed()) return;
   try {
     focusBarWindow.setAlwaysOnTop(true, 'screen-saver', 2);
@@ -584,7 +642,7 @@ function hideOverlayFully() {
     overlayWindow.webContents.send('overlay:clear');
     overlayWindow.hide();
     overlayWindow.setIgnoreMouseEvents(true, { forward: true });
-    raiseFocusBarAboveOverlay();
+    if (sessionLive) raiseFocusBarAboveOverlay();
   });
 }
 
@@ -629,6 +687,16 @@ function createWindow() {
     hideFocusBarForMainWindowActivation();
   });
 
+  win.on('close', () => {
+    sessionLive = false;
+    focusBarContentSize = { width: 580, height: 54 };
+    focusBarDockItems = [];
+    if (focusBarWindow && !focusBarWindow.isDestroyed()) {
+      focusBarWindow.destroy();
+      focusBarWindow = null;
+    }
+  });
+
   win.on('closed', () => {
     mainWindow = null;
     sessionLive = false;
@@ -657,8 +725,10 @@ app.whenReady().then(() => {
     if (overlayWindow && !overlayWindow.isDestroyed()) {
       whenOverlayReady(overlayWindow, () => resizeOverlayToVirtualScreen());
     }
-    positionFocusBar();
-    raiseFocusBarAboveOverlay();
+    if (sessionLive) {
+      positionFocusBar();
+      raiseFocusBarAboveOverlay();
+    }
   });
 
   app.on('activate', () => {
@@ -815,10 +885,25 @@ ipcMain.handle('iris:build-xlsx-from-screen', async (e, payload) =>
   ipcExportScreenFile(e, { ...payload, format: 'xlsx' })
 );
 
+ipcMain.handle('iris:maps-link-from-screen', async (_e, payload) => {
+  const apiKey = (process.env.GEMINI_API_KEY || '').trim();
+  if (!apiKey) {
+    throw new Error('Missing GEMINI_API_KEY in .env');
+  }
+  const imageBase64 = typeof payload?.imageBase64 === 'string' ? payload.imageBase64.trim() : '';
+  if (!imageBase64) {
+    throw new Error('No screen image — share your screen first.');
+  }
+  const userHint = typeof payload?.userHint === 'string' ? payload.userHint.trim() : '';
+  return extractMapsLinkJson(apiKey, imageBase64, userHint);
+});
+
 ipcMain.on('iris:set-session-live', (_e, live) => {
   sessionLive = !!live;
   if (!sessionLive) {
     captureMetrics = null;
+    focusBarContentSize = { width: 580, height: 54 };
+    clearFocusBarDockState();
     hideFocusBar();
     hideOverlayFully();
     if (mainWindow && !mainWindow.isDestroyed()) {
@@ -830,6 +915,48 @@ ipcMain.on('iris:set-session-live', (_e, live) => {
   } else if (mainWindow && mainWindow.isMinimized()) {
     showFocusBar();
   }
+});
+
+ipcMain.on('iris:push-focus-bar-dock', (_e, item) => {
+  pushFocusBarDockItem(item);
+});
+
+ipcMain.on('focus-bar:resize', (_e, payload) => {
+  const w = Math.round(Number(payload?.width));
+  const h = Math.round(Number(payload?.height));
+  if (!Number.isFinite(w) || !Number.isFinite(h)) return;
+  focusBarContentSize.width = Math.min(640, Math.max(320, w));
+  focusBarContentSize.height = Math.min(720, Math.max(54, h));
+  if (focusBarWindow && !focusBarWindow.isDestroyed()) {
+    positionFocusBar();
+  }
+});
+
+ipcMain.on('focus-bar:composer-submit', (_e, text) => {
+  const t = typeof text === 'string' ? text.trim() : '';
+  if (!t || !mainWindow || mainWindow.isDestroyed()) return;
+  mainWindow.webContents.send('iris:focus-bar-composer-submit', t);
+});
+
+ipcMain.handle('iris:focus-bar-dock-snapshot', () => ({ items: focusBarDockItems }));
+
+ipcMain.handle('iris:open-external', async (_e, url) => {
+  const s = typeof url === 'string' ? url.trim() : '';
+  if (!s) return false;
+  try {
+    const u = new URL(s);
+    if (u.protocol !== 'https:' && u.protocol !== 'http:') return false;
+    await shell.openExternal(s);
+    return true;
+  } catch {
+    return false;
+  }
+});
+
+ipcMain.on('focus-bar:dock-dismiss', (_e, id) => {
+  const sid = typeof id === 'string' ? id.trim() : '';
+  if (!sid) return;
+  focusBarDockItems = focusBarDockItems.filter((x) => x.id !== sid);
 });
 
 ipcMain.on('iris:capture-metrics', (_e, metrics) => {
@@ -874,6 +1001,16 @@ ipcMain.handle('iris:focus-rects-update', async (_e, payload) => {
   return true;
 });
 
+ipcMain.on('overlay:set-mouse-through', (_e, payload) => {
+  if (!overlayWindow || overlayWindow.isDestroyed()) return;
+  const passThrough = payload?.passThrough !== false;
+  if (passThrough) {
+    overlayWindow.setIgnoreMouseEvents(true, { forward: true });
+  } else {
+    overlayWindow.setIgnoreMouseEvents(false);
+  }
+});
+
 ipcMain.on('focus-bar:add-regions', () => {
   if (!sessionLive) return;
   showOverlayDrawing();
@@ -892,6 +1029,38 @@ ipcMain.handle('iris:get-api-key', () => {
   const key = process.env.GEMINI_API_KEY || '';
   return key.trim();
 });
+
+ipcMain.handle('iris:get-memory-profile', () => ({
+  profileText: memoryStore.getProfileText(),
+}));
+
+ipcMain.handle('iris:memory-append-turn', async (_, payload) => {
+  memoryStore.appendTurn(payload);
+  memoryStore.scheduleAutoConsolidate(process.env.GEMINI_API_KEY || '');
+});
+
+ipcMain.handle('iris:memory-session-ended', async () => {
+  memoryStore.cancelAutoConsolidateTimer();
+  const key = process.env.GEMINI_API_KEY || '';
+  if (!key.trim()) return false;
+  try {
+    await memoryStore.consolidate(key);
+    return true;
+  } catch {
+    return false;
+  }
+});
+
+ipcMain.handle('iris:google-calendar-status', () => googleCalendar.getCalendarStatus());
+
+ipcMain.handle('iris:google-calendar-auth', async () => {
+  await googleCalendar.startAuthFlow();
+  return googleCalendar.getCalendarStatus();
+});
+
+ipcMain.handle('iris:google-calendar-create-event', async (_e, payload) =>
+  googleCalendar.createCalendarEvent(payload && typeof payload === 'object' ? payload : {})
+);
 
 ipcMain.handle('iris:get-app-version', () => require('./package.json').version);
 

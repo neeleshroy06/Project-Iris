@@ -160,10 +160,9 @@ body {
   overflow: hidden;
 }
 
-/* Main shell hidden while welcome is open — transparent welcome must not reveal this layer */
+/* Hidden until “Get started” — paired with opaque .welcome-screen so home UI cannot show through */
 #mainApp.main-app--behind-welcome {
-  visibility: hidden;
-  pointer-events: none;
+  display: none !important;
 }
 
 /* Animated grainy gradient — dark + light palettes */
@@ -539,6 +538,10 @@ body {
   flex-wrap: wrap;
 }
 
+.msg-calendar .msg-body p {
+  margin: 0 0 8px;
+}
+
 .theme-toggle {
   padding: 8px 10px;
   min-width: 40px;
@@ -574,9 +577,15 @@ body {
 }
 
 .logo {
-  font-size: 28px;
-  color: var(--accent);
-  line-height: 1;
+  flex-shrink: 0;
+  line-height: 0;
+}
+
+.logo-img {
+  width: 36px;
+  height: 36px;
+  object-fit: contain;
+  display: block;
 }
 
 h1 {
@@ -631,6 +640,40 @@ h1 {
   flex-wrap: wrap;
   align-items: center;
   gap: 10px;
+}
+
+.transcript-composer {
+  flex-shrink: 0;
+  margin-top: 10px;
+  padding-top: 10px;
+  border-top: 1px solid var(--border);
+}
+
+.transcript-composer__input {
+  width: 100%;
+  box-sizing: border-box;
+  font: inherit;
+  font-size: 0.9rem;
+  padding: 10px 12px;
+  border-radius: 8px;
+  border: 1px solid var(--border);
+  background: var(--surface);
+  color: var(--text);
+}
+
+.transcript-composer__input:disabled {
+  opacity: 0.65;
+  cursor: not-allowed;
+}
+
+.transcript-composer__input:not(:disabled):focus {
+  outline: 2px solid rgba(69, 104, 130, 0.55);
+  outline-offset: 1px;
+}
+
+.transcript-composer__input::placeholder {
+  color: var(--muted);
+  opacity: 0.9;
 }
 
 .observation-mode {
@@ -1163,7 +1206,8 @@ h1 {
   align-items: stretch;
   justify-content: center;
   padding: 28px 24px 48px;
-  background: transparent;
+  /* Opaque — was transparent, so #mainApp (above .app-bg) showed through and looked “merged” with landing */
+  background: var(--bg);
   overflow: auto;
 }
 
