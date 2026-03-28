@@ -1273,20 +1273,23 @@ h1 {
   text-align: center;
   margin-top: auto;
   margin-bottom: auto;
-  padding: 24px 0 32px;
+  padding: 8px 0 20px;
+  /* Lift hero toward vertical center without growing gap below headline */
+  transform: translateY(-11vh);
 }
 
 .welcome-headline {
-  margin: 0 0 20px;
-  font-size: clamp(2.5rem, 8vw, 3.75rem);
+  margin: 0;
+  padding: 0;
+  font-size: 72pt;
   font-weight: 700;
   letter-spacing: -0.04em;
   color: #fafafa;
-  line-height: 1.05;
+  line-height: 0.98;
 }
 
 .welcome-sub {
-  margin: 0 auto 36px;
+  margin: 10px auto 28px;
   max-width: 520px;
   font-size: 1.05rem;
   line-height: 1.55;

@@ -12,6 +12,8 @@ const { execFile } = require('child_process');
 require('dotenv').config({ path: path.join(__dirname, '.env') });
 
 const shellPreload = path.join(__dirname, 'preload-shell.js');
+/** Window / taskbar branding (replaces default Electron icon when set on BrowserWindow). */
+const APP_ICON = path.join(__dirname, 'renderer', 'assets', 'iris-logo.png');
 const {
   extractChartJson,
   buildXlsxBuffer,
@@ -653,6 +655,7 @@ function createWindow() {
     minWidth: 720,
     minHeight: 640,
     title: 'Iris — Gemini Live',
+    icon: APP_ICON,
     backgroundColor: '#0f1e38',
     webPreferences: {
       preload: path.join(__dirname, 'preload.js'),
@@ -707,6 +710,14 @@ function createWindow() {
 
 app.whenReady().then(() => {
   Menu.setApplicationMenu(null);
+
+  if (process.platform === 'darwin' && app.dock) {
+    try {
+      app.dock.setIcon(APP_ICON);
+    } catch {
+      /* ignore */
+    }
+  }
 
   const { session } = require('electron');
   session.defaultSession.setPermissionRequestHandler(
