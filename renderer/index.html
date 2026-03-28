@@ -1,0 +1,75 @@
+<!DOCTYPE html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self'; style-src 'self'; img-src 'self' blob: data:; media-src 'self' blob: data:; connect-src wss://generativelanguage.googleapis.com https://generativelanguage.googleapis.com" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Iris</title>
+    <link rel="stylesheet" href="styles.css" />
+  </head>
+  <body>
+    <div class="app">
+      <header class="header">
+        <div class="brand">
+          <span class="logo" aria-hidden="true">◉</span>
+          <div>
+            <h1>Iris</h1>
+            <p class="tagline">Gemini 3.1 Flash Live · voice + screen</p>
+          </div>
+        </div>
+        <div id="status" class="status status-idle" role="status">Disconnected</div>
+      </header>
+
+      <section class="toolbar">
+        <button type="button" id="btnStart" class="btn btn-primary">Start session</button>
+        <button type="button" id="btnStop" class="btn" disabled>Stop</button>
+        <button type="button" id="btnShareScreen" class="btn btn-secondary" disabled>Share screen</button>
+        <div class="hint">
+          After <strong>Live</strong>, share your screen. <strong>Minimize</strong> Iris to show the bottom-left bar (blinking green = active) and use <strong>Add focus regions</strong> on your desktop.
+        </div>
+      </section>
+
+      <section class="compose">
+        <label class="sr-only" for="textSend">Send text to the model</label>
+        <input type="text" id="textSend" placeholder="Optional: type a message (Enter to send)" autocomplete="off" disabled />
+        <button type="button" id="btnSendText" class="btn btn-ghost" disabled>Send</button>
+      </section>
+
+      <main class="main">
+        <div class="panel preview-panel">
+          <h2>Screen preview</h2>
+          <p class="panel-note">
+            <strong>1 fps</strong> to the model. After you click <strong>Done drawing</strong> on the minimized bar, Iris sends <strong>focus region coordinates as text</strong> so Gemini can align regions with the image—even for single-window share. Full-display share gives the most reliable mapping.
+          </p>
+          <div id="previewWrap" class="preview-wrap">
+            <video id="previewVideo" autoplay muted playsinline></video>
+            <div id="previewPlaceholder" class="preview-placeholder">Share a screen to see preview</div>
+          </div>
+        </div>
+
+        <div class="panel transcript-panel">
+          <h2>Conversation</h2>
+          <div id="transcript" class="transcript" aria-live="polite"></div>
+        </div>
+      </main>
+
+      <div id="desktopPicker" class="desktop-picker hidden" aria-hidden="true">
+        <div class="desktop-picker-dialog" role="dialog" aria-modal="true" aria-labelledby="desktopPickerTitle">
+          <h3 id="desktopPickerTitle">Choose what to share</h3>
+          <p class="desktop-picker-sub">
+            If the normal Windows dialog did not work, pick a <strong>screen</strong> (full display) or <strong>window</strong> below.
+          </p>
+          <div id="desktopPickerGrid" class="desktop-picker-grid"></div>
+          <button type="button" id="desktopPickerCancel" class="btn desktop-picker-cancel">Cancel</button>
+        </div>
+      </div>
+
+      <footer class="footer">
+        <span>Model: gemini-3.1-flash-live-preview</span>
+        <a href="https://ai.google.dev/gemini-api/docs/multimodal-live" target="_blank" rel="noreferrer">Live API docs</a>
+      </footer>
+    </div>
+
+    <script type="module" src="app.js"></script>
+  </body>
+</html>
